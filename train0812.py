@@ -336,7 +336,7 @@ for e in range(start_epoch, cfg.epochs):
 
             del ckpt
 
-        if fi > best_fitness or e % 3 == 0 or (e+1) == cfg.epochs:
+        if fi > best_fitness or e % 3 == 0 or (e + 1) == cfg.epochs:
             pbar = enumerate(val_loader)
             pbar = tqdm(pbar, total=len(val_loader))
             # 保存结果
@@ -352,9 +352,8 @@ for e in range(start_epoch, cfg.epochs):
                         image = imgs[i] * 255
 
                         #  从targets中取出一个target
-                        target = [x for x in targets if
-                                  x[
-                                      0] == i]  # tensor([   0.0000,   23.0000,  585.5040,  459.5063,    0.1703,    0.5640])]
+                        target = [x for x in targets if x[0] == i]
+                        # tensor([   0.0000,   23.0000,  585.5040,  459.5063,    0.1703,    0.5640])]
 
                         pred = preds[i]  # pred 中 x y w h obj 80个cls  共85维，其中obj表示是否含有目标
                         pre = pred[:, 4].cpu().numpy()

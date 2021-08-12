@@ -15,7 +15,6 @@ evolve = False
 exist_ok = False
 hyp = 'yolov5_official/yamls/hyp.scratch.yaml'
 image_weights = False
-# img_size = [640, 640] # 直接写640就好
 img_size = 640
 label_smoothing = 0.2
 linear_lr = False

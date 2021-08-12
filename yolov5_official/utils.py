@@ -1447,7 +1447,7 @@ def save_box_img(image, targets, wid, hei, prefix='', names=''):
     img_ = cv2.imread(prefix + '_ori.jpg')
     for box in targets:
         x1, y1, w, h = box[2:]  # 这里的x y是中心坐标
-        label = int(box[1])
+        label = int(box[0])
         # print(xmin, ymin, xmax, ymax)
         x1 = x1 - w / 2
         y1 = y1 - h / 2

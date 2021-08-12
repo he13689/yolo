@@ -400,9 +400,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         assert nf > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels. '
 
         # Read cache
-        # cache.pop('hash')  # remove hash
-        # cache.pop('version')  # remove version
-        [cache.pop(k) for k in ('hash', 'version', 'msgs')]
+        cache.pop('hash')  # remove hash
+        cache.pop('version')  # remove version
+        # [cache.pop(k) for k in ('hash', 'version', 'msgs')]
 
         labels, shapes, self.segments = zip(*cache.values())
         self.labels = list(labels)
