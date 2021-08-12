@@ -295,13 +295,12 @@ class Focus(nn.Module):
 
 
 class Contract(nn.Module):  # 将wh维度缩小，同时保证参数量不变，即增加channel的维度
-    # Contract width-height into channels, i.e. x(1,64,80,80) to x(1,256,40,40)
     def __init__(self, gain=2):
         super().__init__()
         self.gain = gain
 
     def forward(self, x):
-        N, C, H, W = x.size()  # assert (H / s == 0) and (W / s == 0), 'Indivisible gain'
+        N, C, H, W = x.size()
         s = self.gain
         x = x.view(N, C, H // s, s, W // s, s)  # x(1,64,40,2,40,2)
         x = x.permute(0, 3, 5, 1, 2, 4).contiguous()  # x(1,2,2,64,40,40)
@@ -309,13 +308,12 @@ class Contract(nn.Module):  # 将wh维度缩小，同时保证参数量不变，
 
 
 class Expand(nn.Module):  # 和contract相反，减少channels维度以扩展wh维度
-    # Expand channels into width-height, i.e. x(1,64,80,80) to x(1,16,160,160)
     def __init__(self, gain=2):
         super().__init__()
         self.gain = gain
 
     def forward(self, x):
-        N, C, H, W = x.size()  # assert C / s ** 2 == 0, 'Indivisible gain'
+        N, C, H, W = x.size()
         s = self.gain
         x = x.view(N, s, s, C // s ** 2, H, W)  # x(1,2,2,16,80,80)
         x = x.permute(0, 3, 4, 1, 5, 2).contiguous()  # x(1,16,80,2,80,2)
@@ -323,7 +321,6 @@ class Expand(nn.Module):  # 和contract相反，减少channels维度以扩展wh�
 
 
 class Concat(nn.Module):  # 传入dim 进行cat
-    # Concatenate a list of tensors along dimension
     def __init__(self, dimension=1):
         super(Concat, self).__init__()
         self.d = dimension

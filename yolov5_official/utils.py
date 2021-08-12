@@ -9,6 +9,8 @@ import torch
 import torchvision
 import yaml
 from tqdm import tqdm
+
+
 #
 #
 # def list_of_groups(list_info, per_list_len):
@@ -265,6 +267,7 @@ def bbox_iou2(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False):
                 return iou - (rho2 / c2 + v * alpha)  # CIoU
     return iou
 
+
 def non_max_suppression2(prediction, conf_thres=0.25, nms_thres=0.6, multi_cls=True, method='diou_nms'):
     """
         移除小于conf_thres的框
@@ -322,7 +325,7 @@ def non_max_suppression2(prediction, conf_thres=0.25, nms_thres=0.6, multi_cls=T
 
         # Batched NMS
         # Batched NMS推理时间：0.054
-        if method == 'hard_nms_batch': # 普通的(hard)nms: 官方实现(c函数库),可支持gpu,但支持多类别输入
+        if method == 'hard_nms_batch':  # 普通的(hard)nms: 官方实现(c函数库),可支持gpu,但支持多类别输入
             # batched_nms：参数1 [43, xyxy]  参数2 [43, score]  参数3 [43, class]  参数4 [43, nms_thres]
             output[image_i] = pred[torchvision.ops.boxes.batched_nms(pred[:, :4], pred[:, 4], pred[:, 5], nms_thres)]
             # print("hard_nms_batch")
@@ -337,7 +340,7 @@ def non_max_suppression2(prediction, conf_thres=0.25, nms_thres=0.6, multi_cls=T
             if n == 1:
                 det_max.append(dc)  # No NMS required if only 1 prediction
                 continue
-            elif n > 500:# 密集性 主要考虑到NMS是一个速度慢的算法（O(n^2)）,预测框太多,算法的效率太慢 所以这里筛选一下（最多500个预测框）
+            elif n > 500:  # 密集性 主要考虑到NMS是一个速度慢的算法（O(n^2)）,预测框太多,算法的效率太慢 所以这里筛选一下（最多500个预测框）
                 dc = dc[:500]  # limit to first 500 boxes: https://github.com/ultralytics/yolov3/issues/117
 
             # 推理时间：0.001
@@ -369,7 +372,7 @@ def non_max_suppression2(prediction, conf_thres=0.25, nms_thres=0.6, multi_cls=T
                         det_max.append(dc)
                         break
                     i = bbox_iou2(dc[0], dc) > nms_thres  # i = True/False的集合
-                    weights = dc[i, 4:5]     # 根据i，保留所有True
+                    weights = dc[i, 4:5]  # 根据i，保留所有True
                     dc[0, :4] = (weights * dc[i, :4]).sum(0) / weights.sum()  # 重叠框位置信息求解平均值
                     det_max.append(dc[:1])
                     dc = dc[i == 0]
@@ -382,7 +385,7 @@ def non_max_suppression2(prediction, conf_thres=0.25, nms_thres=0.6, multi_cls=T
                     #     det_max.append(dc)
                     #     break
                     # det_max.append(dc[:1])
-                    det_max.append(dc[:1])   # 保存dc的第一行  target
+                    det_max.append(dc[:1])  # 保存dc的第一行  target
                     if len(dc) == 1:
                         break
                     iou = bbox_iou2(dc[0], dc[1:])  # 计算target与其他框的iou
@@ -410,7 +413,8 @@ def non_max_suppression2(prediction, conf_thres=0.25, nms_thres=0.6, multi_cls=T
     return output
 
 
-def diou_non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, max_box=1500, classes=None, agnostic=False, use_gpu=False, max_det=300, labels=None,  multi_label=True):
+def diou_non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, max_box=1500, classes=None, agnostic=False,
+                             use_gpu=False, max_det=300, labels=None, multi_label=True):
     """
     对结果使用Diou nms
     返回结果和原来NMS的结果格式一样
@@ -614,7 +618,8 @@ class ComputeLoss:
         #        print(targets.shape, tcls[0].shape, tbox[0].shape, indices[0][0].shape, anchors[0].shape)
         #        print(tcls[0][0], tbox[0][0], indices[0][0][0], anchors[0][0])  tensor(22, device='cuda:0') tensor([ 0.0000,  0.0000,  3.9208,  4.7879], device='cuda:0') tensor(1, device='cuda:0') tensor([ 1.2500,  1.6250], device='cuda:0')
         for i, p in enumerate(pred):
-            b, a, gj, gi = indices[i]  # 每个indices 里面有四个tensor，分别是 iamge, anchor, 以及 grid 上的 xy 代表第b张image的第a个anchor，它的坐标是gj和gi
+            b, a, gj, gi = indices[
+                i]  # 每个indices 里面有四个tensor，分别是 iamge, anchor, 以及 grid 上的 xy 代表第b张image的第a个anchor，它的坐标是gj和gi
             #            print(p.shape, b.shape, a.shape, gj.shape, gi.shape)  # torch.Size([4, 3, 80, 80, 85]) torch.Size([447]) torch.Size([447]) torch.Size([447]) torch.Size([447])
             #            print(b[0], a[0], gj[0], gi[0]) # tensor(1, device='cuda:0') tensor(0, device='cuda:0') tensor(11.1508, device='cuda:0') tensor(72.8764, device='cuda:0')
             tobj = torch.zeros_like(p[..., 0])  # torch.Size([4, 3, 80, 80])
@@ -629,7 +634,7 @@ class ComputeLoss:
                 # 对比pred出的box和tbox，看看它们两个之间的差异  使用CIOU进行改进
                 iou = bbox_iou(pbox.t(), tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss  计算ious loss
-                
+
                 # 目标 objectness
                 tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(tobj.dtype)  # iou ratio
 
@@ -646,7 +651,7 @@ class ComputeLoss:
         #                self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
         #
         if self.autobalance:
-            self.balance = self.balance[i]*0.9999 + 0.0001/obji.detach().item()
+            self.balance = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
         # 将不同的loss来源乘上相应的权重， 比如box的权重就是0.05
         lbox *= self.hyp['box']
         lobj *= self.hyp['obj']
@@ -1341,7 +1346,7 @@ def check_anchors(dataset, model, thr=4.0, imgsz=640):
         else:
             print(f'Original anchors better than new anchors. Proceeding with original anchors.')
     print('')  # newline
-    
+
 
 # 加载前23层的模型 适用于v5s
 def load_pt(net, pretrained_model_src):
@@ -1396,16 +1401,14 @@ def ones_(tensor):
     with torch.no_grad():
         tensor.data.fill_(1.0)
         return tensor
-    
-    
+
+
 def labels_to_image_weights(labels, nc=80, class_weights=np.ones(80)):
     # Produces image weights based on class_weights and image contents
     class_counts = np.array([np.bincount(x[:, 0].astype(np.int), minlength=nc) for x in labels])
     image_weights = (class_weights.reshape(1, nc) * class_counts).sum(1)
     # index = random.choices(range(n), weights=image_weights, k=1)  # weight image sample
     return image_weights
-
-
 
 
 class Albumentations:
@@ -1425,14 +1428,14 @@ class Albumentations:
             pass
         except Exception as e:
             print(e)
-            
+
     def __call__(self, im, labels, p=1.0):
         if self.transform and random.random() < p:
             new = self.transform(image=im, bboxes=labels[:, 1:], class_labels=labels[:, 0])  # transformed
             im, labels = new['image'], np.array([[c, *b] for c, b in zip(new['class_labels'], new['bboxes'])])
         return im, labels
-    
-    
+
+
 def intersect_dicts(da, db, exclude=()):
     return {k: v for k, v in da.items() if k in db and not any(x in k for x in exclude) and v.shape == db[k].shape}
 
@@ -1460,3 +1463,11 @@ def save_box_img(image, targets, wid, hei, prefix='', names=''):
         cv2.imwrite(prefix, img_)
     except:
         print('打印失败')
+
+
+def mixup(im, labels, im2, labels2):
+    # Applies MixUp augmentation https://arxiv.org/pdf/1710.09412.pdf
+    r = np.random.beta(32.0, 32.0)  # mixup ratio, alpha=beta=32.0
+    im = (im * r + im2 * (1 - r)).astype(np.uint8)
+    labels = np.concatenate((labels, labels2), 0)
+    return im, labels
