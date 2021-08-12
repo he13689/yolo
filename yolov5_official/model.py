@@ -442,6 +442,7 @@ def parse_model(par, inch):
     anchors, nc, gd, gw = par['anchors'], par['nc'], par['depth_multiple'], par['width_multiple']
     num_anchors = len(anchors[0]) // 2 if isinstance(anchors, list) else anchors  # 3 有几个anchors
     out_channels = num_anchors * (nc + 5)  # number of outputs = anchors * (classes + 5)
+
     layers, c2, save = [], inch[-1], []
     # [from, number, module, args]  读取模型，有23层
     for i, (f, n, m, args) in enumerate(par['backbone'] + par['head']):
