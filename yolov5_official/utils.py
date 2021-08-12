@@ -1066,26 +1066,6 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
 
 
 def save_one_txt(predn, save_conf, shape, file):
-    '''
-    
-
-    Parameters
-    ----------
-    predn : TYPE
-        DESCRIPTION.
-    save_conf : TYPE
-        是否保存 conf.
-    shape : TYPE
-        DESCRIPTION.
-    file : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    '''
-    # Save one txt result
     gn = torch.tensor(shape)[[1, 0, 1, 0]]  # normalization gain whwh
     for *xyxy, conf, cls in predn.tolist():
         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
@@ -1466,8 +1446,7 @@ def save_box_img(image, targets, wid, hei, prefix='', names=''):
 
 
 def mixup(im, labels, im2, labels2):
-    # Applies MixUp augmentation https://arxiv.org/pdf/1710.09412.pdf
-    r = np.random.beta(32.0, 32.0)  # mixup ratio, alpha=beta=32.0
+    r = np.random.beta(32.0, 32.0)
     im = (im * r + im2 * (1 - r)).astype(np.uint8)
     labels = np.concatenate((labels, labels2), 0)
     return im, labels
