@@ -1,0 +1,345 @@
+F:\anaconda\python.exe G:/python/recreate/yolo23/models/v5.py
+YOLOv5(
+  (base): CSPDarknetV5(
+    (big): Sequential(
+      (0): Focus(  # FOCUS
+        (conv): Conv2d(12, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+        (bn): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (act): LeakyReLU(negative_slope=0.01, inplace)
+      )
+      (1): Conv(  # CBL
+        (conv): Sequential(
+          (0): Conv2d(32, 64, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+          (1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): LeakyReLU(negative_slope=0.1, inplace)
+        )
+      )
+      (2): CSPModule(  # CSP1-1
+        (up): Sequential(
+          (0): Conv2d(64, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): LeakyReLU(negative_slope=0.01, inplace)
+        )
+        (res): CSPResUnit(
+          (main): Sequential(
+            (0): Sequential(
+              (0): Conv2d(32, 32, kernel_size=(1, 1), stride=(1, 1))
+              (1): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (2): LeakyReLU(negative_slope=0.01, inplace)
+              (3): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+              (4): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (5): LeakyReLU(negative_slope=0.01, inplace)
+            )
+          )
+        )
+        (bottom): Conv2d(64, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (tie): Sequential(
+          (0): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (1): LeakyReLU(negative_slope=0.01, inplace)
+          (2): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+      )
+      (3): Conv(  # CBL
+        (conv): Sequential(
+          (0): Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+          (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): LeakyReLU(negative_slope=0.1, inplace)
+        )
+      )
+      (4): CSPModule(  # CSP1-3
+        (up): Sequential(
+          (0): Conv2d(128, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): LeakyReLU(negative_slope=0.01, inplace)
+        )
+        (res): CSPResUnit(
+          (main): Sequential(
+            (0): Sequential(
+              (0): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1))
+              (1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (2): LeakyReLU(negative_slope=0.01, inplace)
+              (3): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+              (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (5): LeakyReLU(negative_slope=0.01, inplace)
+            )
+            (1): Sequential(
+              (0): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1))
+              (1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (2): LeakyReLU(negative_slope=0.01, inplace)
+              (3): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+              (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (5): LeakyReLU(negative_slope=0.01, inplace)
+            )
+            (2): Sequential(
+              (0): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1))
+              (1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (2): LeakyReLU(negative_slope=0.01, inplace)
+              (3): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+              (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (5): LeakyReLU(negative_slope=0.01, inplace)
+            )
+          )
+        )
+        (bottom): Conv2d(128, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (tie): Sequential(
+          (0): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (1): LeakyReLU(negative_slope=0.01, inplace)
+          (2): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+      )
+    )
+    (small): Sequential( # CBL SPP CSP
+      (0): Conv(  # CBL
+        (conv): Sequential(
+          (0): Conv2d(256, 512, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+          (1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): LeakyReLU(negative_slope=0.1, inplace)
+        )
+      )
+      (1): Conv(  # SPP
+        (conv): Sequential(
+          (0): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1))
+          (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): LeakyReLU(negative_slope=0.1, inplace)
+        )
+      )
+      (2): SPP(  # SPP
+        (mp1): MaxPool2d(kernel_size=5, stride=1, padding=2, dilation=1, ceil_mode=False)
+        (mp2): MaxPool2d(kernel_size=9, stride=1, padding=4, dilation=1, ceil_mode=False)
+        (mp3): MaxPool2d(kernel_size=13, stride=1, padding=6, dilation=1, ceil_mode=False)
+      )
+      (3): Conv(  # SPP
+        (conv): Sequential(
+          (0): Conv2d(1024, 512, kernel_size=(1, 1), stride=(1, 1))
+          (1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): LeakyReLU(negative_slope=0.1, inplace)
+        )
+      )
+    )
+    (medium): Sequential(
+      (0): Conv(  # CBL
+        (conv): Sequential(
+          (0): Conv2d(128, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+          (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): LeakyReLU(negative_slope=0.1, inplace)
+        )
+      )
+      (1): CSPModule(  # CSP1-3
+        (up): Sequential(
+          (0): Conv2d(256, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): LeakyReLU(negative_slope=0.01, inplace)
+        )
+        (res): CSPResUnit(
+          (main): Sequential(
+            (0): Sequential(
+              (0): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1))
+              (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (2): LeakyReLU(negative_slope=0.01, inplace)
+              (3): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+              (4): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (5): LeakyReLU(negative_slope=0.01, inplace)
+            )
+            (1): Sequential(
+              (0): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1))
+              (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (2): LeakyReLU(negative_slope=0.01, inplace)
+              (3): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+              (4): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (5): LeakyReLU(negative_slope=0.01, inplace)
+            )
+            (2): Sequential(
+              (0): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1))
+              (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (2): LeakyReLU(negative_slope=0.01, inplace)
+              (3): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+              (4): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+              (5): LeakyReLU(negative_slope=0.01, inplace)
+            )
+          )
+        )
+        (bottom): Conv2d(256, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (tie): Sequential(
+          (0): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (1): LeakyReLU(negative_slope=0.01, inplace)
+          (2): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+      )
+    )
+  )
+  (neck_small): Sequential(
+    (0): CSPModule(  # CSP1-1
+      (up): Sequential(
+        (0): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): LeakyReLU(negative_slope=0.01, inplace)
+      )
+      (res): CSPResUnit(
+        (main): Sequential(
+          (0): Sequential(
+            (0): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+            (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (2): LeakyReLU(negative_slope=0.01, inplace)
+            (3): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+            (4): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (5): LeakyReLU(negative_slope=0.01, inplace)
+          )
+        )
+      )
+      (bottom): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (tie): Sequential(
+        (0): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (1): LeakyReLU(negative_slope=0.01, inplace)
+        (2): Conv2d(512, 512, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      )
+    )
+    (1): Conv(  #CBL
+      (conv): Sequential(
+        (0): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1))
+        (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): LeakyReLU(negative_slope=0.1, inplace)
+      )
+    )
+  )
+  (neck_medium): Sequential(
+    (0): CSPModule(
+      (up): Sequential(
+        (0): Conv2d(512, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): LeakyReLU(negative_slope=0.01, inplace)
+      )
+      (res): CSPResUnit(
+        (main): Sequential(
+          (0): Sequential(
+            (0): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1))
+            (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (2): LeakyReLU(negative_slope=0.01, inplace)
+            (3): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+            (4): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (5): LeakyReLU(negative_slope=0.01, inplace)
+          )
+        )
+      )
+      (bottom): Conv2d(512, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (tie): Sequential(
+        (0): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (1): LeakyReLU(negative_slope=0.01, inplace)
+        (2): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      )
+    )
+    (1): Conv(
+      (conv): Sequential(
+        (0): Conv2d(256, 128, kernel_size=(1, 1), stride=(1, 1))
+        (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): LeakyReLU(negative_slope=0.1, inplace)
+      )
+    )
+  )
+  (tie_large): Sequential(
+    (0): CSPModule(
+      (up): Sequential(
+        (0): Conv2d(256, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): LeakyReLU(negative_slope=0.01, inplace)
+      )
+      (res): CSPResUnit(
+        (main): Sequential(
+          (0): Sequential(
+            (0): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1))
+            (1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (2): LeakyReLU(negative_slope=0.01, inplace)
+            (3): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+            (4): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (5): LeakyReLU(negative_slope=0.01, inplace)
+          )
+        )
+      )
+      (bottom): Conv2d(256, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (tie): Sequential(
+        (0): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (1): LeakyReLU(negative_slope=0.01, inplace)
+        (2): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      )
+    )
+  )
+  (tie_medium): Sequential(
+    (0): CSPModule(
+      (up): Sequential(
+        (0): Conv2d(256, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): LeakyReLU(negative_slope=0.01, inplace)
+      )
+      (res): CSPResUnit(
+        (main): Sequential(
+          (0): Sequential(
+            (0): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1))
+            (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (2): LeakyReLU(negative_slope=0.01, inplace)
+            (3): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+            (4): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (5): LeakyReLU(negative_slope=0.01, inplace)
+          )
+        )
+      )
+      (bottom): Conv2d(256, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (tie): Sequential(
+        (0): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (1): LeakyReLU(negative_slope=0.01, inplace)
+        (2): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      )
+    )
+  )
+  (tie_small): Sequential(
+    (0): CSPModule(
+      (up): Sequential(
+        (0): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): LeakyReLU(negative_slope=0.01, inplace)
+      )
+      (res): CSPResUnit(
+        (main): Sequential(
+          (0): Sequential(
+            (0): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+            (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (2): LeakyReLU(negative_slope=0.01, inplace)
+            (3): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+            (4): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+            (5): LeakyReLU(negative_slope=0.01, inplace)
+          )
+        )
+      )
+      (bottom): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (tie): Sequential(
+        (0): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (1): LeakyReLU(negative_slope=0.01, inplace)
+        (2): Conv2d(512, 512, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      )
+    )
+  )
+  (pan_medium): Sequential(
+    (0): Conv(
+      (conv): Sequential(
+        (0): Conv2d(128, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+        (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): LeakyReLU(negative_slope=0.1, inplace)
+      )
+    )
+  )
+  (pan_small): Sequential(
+    (0): Conv(
+      (conv): Sequential(
+        (0): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+        (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): LeakyReLU(negative_slope=0.1, inplace)
+      )
+    )
+  )
+  (upsample_medium): Upsample(scale_factor=2, mode=nearest)
+  (upsample_large): Upsample(scale_factor=2, mode=nearest)
+  (det_large): Conv2d(128, 75, kernel_size=(1, 1), stride=(1, 1))
+  (det_medium): Conv2d(256, 75, kernel_size=(1, 1), stride=(1, 1))
+  (det_small): Conv2d(512, 75, kernel_size=(1, 1), stride=(1, 1))
+)
+torch.Size([1, 75, 16, 16]) torch.Size([1, 75, 32, 32]) torch.Size([1, 75, 64, 64])
+
+进程已结束，退出代码为 0
