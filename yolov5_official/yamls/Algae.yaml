@@ -1,0 +1,18 @@
+# Copyright Ultralytics https://ultralytics.com, licensed under GNU GPL v3.0
+# PASCAL VOC dataset http://host.robots.ox.ac.uk/pascal/VOC
+# YOLOv5 🚀 example usage: python train.py --data VOC.yaml
+# parent
+# ├── yolov5
+# └── datasets
+#     └── VOC  ← downloads here
+# 数据拷贝到别的项目需要清理cache，不然可能会报错
+
+
+train: E:/models/yolo23/data/Algae/images/train
+val: E:/models/yolo23/data/Algae/images/val
+
+# Classes
+nc: 14  # number of classes
+names: [ 'sqz','jyzgz','lyz','nsyz','nzl','swzz','jzgz','cszlc','zjl','zzzgz','gz','hlkcc','cwblz','zxzc' ]  
+# 实球藻 近缘针 卵隐藻 啮蚀隐藻 桡足类 四尾栅藻 尖针杆藻 长三肢轮虫 枝角类 肘状针杆藻
+# 硅藻 华丽孔锤虫 长尾扁裸藻 钟形钟虫

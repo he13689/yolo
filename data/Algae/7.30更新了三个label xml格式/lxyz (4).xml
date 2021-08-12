@@ -1,0 +1,25 @@
+<annotation>
+	<folder>my-project-name</folder>
+	<filename>lxyz (4).jpg</filename>
+	<path>/my-project-name/lxyz (4).jpg</path>
+	<source>
+		<database>Unspecified</database>
+	</source>
+	<size>
+		<width>2592</width>
+		<height>1944</height>
+		<depth>3</depth>
+	</size>
+	<object>
+		<name>2</name>
+		<pose>Unspecified</pose>
+		<truncated>Unspecified</truncated>
+		<difficult>Unspecified</difficult>
+		<bndbox>
+			<xmin>1488</xmin>
+			<ymin>810</ymin>
+			<xmax>1985</xmax>
+			<ymax>1206</ymax>
+		</bndbox>
+	</object>
+</annotation>
