@@ -52,8 +52,10 @@ import yaml, random, math
 import yolov5_official.val as val
 from torch.cuda import amp
 from yolov5_official.EMAModel import ModelEMA
-from yolov5_official.datasets import create_dataloader
-# from yolov5_official.dataset import create_dataloader
+
+# from yolov5_official.datasets import create_dataloader
+from yolov5_official.dataset import create_dataloader
+
 from yolov5_official.utils import one_cycle, ComputeLoss, labels_to_class_weights, fitness, check_img_size, \
     check_anchors, labels_to_image_weights, save_box_img, intersect_dicts
 from yolov5_official.model import Model
@@ -198,23 +200,23 @@ if cfg.sync_bn and cfg.use_gpu and RANK != -1:
     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(cfg.device)
 
 # 读取数据
-dataloader, dataset = create_dataloader(train_path, imgsz, cfg.batch_size // cfg.world_size, gs, cfg,
-                                        hyp=hyperparams, augment=True, cache=cfg.cache_images, rect=cfg.rect,
-                                        world_size=cfg.world_size, workers=cfg.workers,
-                                        image_weights=cfg.image_weights, quad=cfg.quad, prefix='train: ')
-# dataloader, dataset = create_dataloader(train_path, imgsz, cfg.batch_size // cfg.world_size, gs, cfg.single_cls,
+# dataloader, dataset = create_dataloader(train_path, imgsz, cfg.batch_size // cfg.world_size, gs, cfg,
 #                                         hyp=hyperparams, augment=True, cache=cfg.cache_images, rect=cfg.rect,
-#                                         rank=RANK, workers=cfg.workers, image_weights=cfg.image_weights, quad=cfg.quad, prefix='train: ')
+#                                         world_size=cfg.world_size, workers=cfg.workers,
+#                                         image_weights=cfg.image_weights, quad=cfg.quad, prefix='train: ')
+dataloader, dataset = create_dataloader(train_path, imgsz, cfg.batch_size // cfg.world_size, gs, cfg.single_cls,
+                                        hyp=hyperparams, augment=True, cache=cfg.cache_images, rect=cfg.rect,
+                                        rank=RANK, workers=cfg.workers, image_weights=cfg.image_weights, quad=cfg.quad, prefix='train: ')
 mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # 最大标签类别
 nb = len(dataloader)  # batch数量
 
 if RANK in [-1, 0]:
-    val_loader = create_dataloader(test_path, imgsz, cfg.batch_size // cfg.world_size * 2, gs, cfg,
-                                   hyp=hyperparams, cache=cfg.cache_images, rect=True,
-                                   world_size=cfg.world_size, workers=cfg.workers, pad=.5, prefix='val: ')[0]
-    # val_loader = create_dataloader(test_path, imgsz, cfg.batch_size // cfg.world_size * 2, gs, cfg.single_cls,
+    # val_loader = create_dataloader(test_path, imgsz, cfg.batch_size // cfg.world_size * 2, gs, cfg,
     #                                hyp=hyperparams, cache=cfg.cache_images, rect=True,
-    #                                rank=-1, workers=cfg.workers, pad=.5, prefix='val: ')[0]
+    #                                world_size=cfg.world_size, workers=cfg.workers, pad=.5, prefix='val: ')[0]
+    val_loader = create_dataloader(test_path, imgsz, cfg.batch_size // cfg.world_size * 2, gs, cfg.single_cls,
+                                   hyp=hyperparams, cache=cfg.cache_images, rect=True,
+                                   rank=-1, workers=cfg.workers, pad=.5, prefix='val: ')[0]
 
     # 自动计算锚框功能 从而使对目标的区域识别更加准确
     if not cfg.resume:  # 如果不是resume name自动计算锚框
