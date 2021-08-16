@@ -22,12 +22,12 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from yolov5_official.utils import xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyn2xy, segment2box, segments2boxes, \
-    resample_segments, clean_str, xyxy2xywhn, Albumentations, mixup
+    resample_segments, clean_str, xyxy2xywhn, Albumentations, mixup, copy_paste
 
 # Parameters
 img_formats = ['bmp', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'dng', 'webp', 'mpo']  # acceptable image suffixes
 vid_formats = ['mov', 'avi', 'mp4', 'mpg', 'mpeg', 'm4v', 'wmv', 'mkv']  # acceptable video suffixes
-logger = logging.getLogger(__name__)
+NUM_THREADS = min(8, os.cpu_count())
 
 # Get orientation exif tag
 for orientation in ExifTags.TAGS.keys():
@@ -666,7 +666,7 @@ def hist_equalize(img, clahe=True, bgr=False):
 
 def load_mosaic(self, index):
     # loads images in a 4-mosaic
-
+    # print('using mosaic...')
     labels4, segments4 = [], []
     s = self.img_size
     yc, xc = [int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border]  # mosaic center x, y
@@ -707,6 +707,7 @@ def load_mosaic(self, index):
         np.clip(x, 0, 2 * s, out=x)  # clip when using random_perspective()
 
     # Augment
+    img4, labels4, segments4 = copy_paste(img4, labels4, segments4, p=self.hyp['copy_paste'])
     img4, labels4 = random_perspective(img4, labels4, segments4,
                                        degrees=self.hyp['degrees'],
                                        translate=self.hyp['translate'],

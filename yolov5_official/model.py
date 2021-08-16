@@ -145,10 +145,13 @@ class Model(nn.Module):
         '''
 
         super(Model, self).__init__()
-        self.yaml_file = Path(cfg).name
-        # 从yaml中读取 model 结构
-        with open(cfg) as f:
-            self.yaml = yaml.safe_load(f)
+        if isinstance(cfg, dict):
+            self.yaml = cfg  # model dict
+        else:
+            self.yaml_file = Path(cfg).name
+            # 从yaml中读取 model 结构
+            with open(cfg) as f:
+                self.yaml = yaml.safe_load(f)
 
         # 定义 model
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)

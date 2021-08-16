@@ -16,8 +16,6 @@
 打开multi scale
 
 8.12 更新  训练方法更新
-
-
 训练计划 对比v5s和我们改造过的v5s之间性能差距并进行分析
                 对比v5s 和 带transformer的v5s之间的性能对比
                 使用v5m 进行训练，其中缩小bs以便能够训练
@@ -26,41 +24,55 @@ datasets 中
 531 略微更改了 mix up 的计算方法
 557 augment_hsv 效果并不明显 所以去掉加快训练速度
 
+8.13 更新
+VAL 模块更新
+改用 新的超参数文件 scratch_new
+检测 mosaic 是否正确启动
+将 固定 random seed 改为可选
+将zero grad移到模型外
+修复 save img box 函数中存在的错误
+！！！ 将obj loss 改为 focal loss可以测试一下 有可能产生较大涨点
+更新了两幅图像的标签
+
 现在需要继续优化一下 模型的 读取保存模块，保证模型读取保存的顺利完成
 
+8.14 加入cudnn.benchmark, cudnn.deterministic的设定
+
 '''
-import math
 from copy import deepcopy
-import random
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
+from torch.backends import cudnn
 from tqdm import tqdm
 import yolov5_official.config as cfg
-import yaml, cv2
+import yaml, random, math
 import yolov5_official.val as val
 from torch.cuda import amp
 from yolov5_official.EMAModel import ModelEMA
 from yolov5_official.datasets import create_dataloader
+# from yolov5_official.dataset import create_dataloader
 from yolov5_official.utils import one_cycle, ComputeLoss, labels_to_class_weights, fitness, check_img_size, \
     check_anchors, labels_to_image_weights, save_box_img, intersect_dicts
 from yolov5_official.model import Model
 import os
 
+
 RANK = int(os.getenv('RANK', -1))  # -1
-print(cfg)
+cfg.world_size = int(os.getenv('WORLD_SIZE', 1))  # 1
+print(RANK, cfg.world_size)
+
 
 if not os.path.exists(cfg.save_dir + cfg.name):
     os.mkdir(cfg.save_dir + cfg.name)
 
 # 读取超参数和数据参数
-with open(cfg.hyp) as f:
+with open(cfg.hyp, encoding='utf-8') as f:
     hyperparams = yaml.safe_load(f)
-with open(cfg.data, encoding='utf-8') as f:
+with open(cfg.data, encoding='ascii', errors='ignore') as f:
     dataparams = yaml.safe_load(f)
-cfg.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
 
 # 把此次运行的参数都保存下来
 with open(cfg.save_dir + cfg.name + 'hyp.yaml', 'w') as f:
@@ -69,31 +81,40 @@ with open(cfg.save_dir + cfg.name + 'cfgig.yaml', 'w') as f:
     yaml.safe_dump(cfg.__name__, f)
 
 # 设定随机数 保证结果可重复
-seed = 1 + RANK
-random.seed(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)
+if not cfg.random_seed:
+    seed = 1 + RANK
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if seed == 0:  # slower, more reproducible
+        cudnn.benchmark, cudnn.deterministic = False, True
+    else:  # faster, less reproducible
+        cudnn.benchmark, cudnn.deterministic = True, False
 
 # print(hyperparams.get('anchors'))  # None
 # 创建模型
-if cfg.use_gpu:
-    if cfg.use_attention:
-        model = Model(cfg.cfg, ch=3, nc=dataparams.get('nc'), anchors=hyperparams.get('anchors', None)).cuda()
-    else:
-        model = Model(cfg.cfg, ch=3, nc=dataparams.get('nc'), anchors=hyperparams.get('anchors', None)).cuda()
-else:
-    model = Model(cfg.cfg, ch=3, nc=dataparams.get('nc'), anchors=hyperparams.get('anchors', None))
+# if cfg.use_gpu:
+#     if cfg.use_attention:
+#         model = Model(cfg.cfg, ch=3, nc=dataparams.get('nc'), anchors=hyperparams.get('anchors', None)).cuda()
+#     else:
+#         model = Model(cfg.cfg, ch=3, nc=dataparams.get('nc'), anchors=hyperparams.get('anchors', None)).cuda()
+# else:
+#     model = Model(cfg.cfg, ch=3, nc=dataparams.get('nc'), anchors=hyperparams.get('anchors', None))
 
 if cfg.pretrained:
     # 加载预训练模型  在models 里面创建了yolo和common文件以便读取迁移学习的模型yolov5s.pt等数据，因为它们是直接load模型，而不只是state，所以要在对应位置有创建模型的代码才可以load
-    load_ckpt = torch.load(cfg.weights)  # 已经可以读取到了weight  load_ckpt.get('model').model[0].conv.conv.weight
+    load_ckpt = torch.load(cfg.weights, map_location=cfg.device)  # 已经可以读取到了weight  load_ckpt.get('model').model[0].conv.conv.weight
+    print(load_ckpt['model'].yaml)
+    model = Model(cfg.cfg or load_ckpt['model'].yaml, ch=3, nc=hyperparams.get('nc'), anchors=hyperparams.get('anchors')).to(cfg.device)
     exc = ['anchor'] if (cfg or hyperparams.get('anchors')) and not cfg.resume else []
     statedict = load_ckpt['model'].float().state_dict()
     statedict = intersect_dicts(statedict, model.state_dict())
     model.load_state_dict(load_ckpt, strict=False)
     print('loaded model ! ')
+else:
+    model = Model(cfg.cfg, ch=3, nc=dataparams.get('nc'), anchors=hyperparams.get('anchors', None)).to(cfg.device)
 
-model.gr = 1.0
 model.train()
 train_path = dataparams.get('train')  # 训练路径
 test_path = dataparams.get('val')  # 验证路径
@@ -167,7 +188,7 @@ if cfg.pretrained:
         ema.updates = load_ckpt['updates']
 
 # 节约内存
-del load_ckpt
+del load_ckpt, statedict
 
 gs = max(int(model.stride.max()), 32)  # 网格大小 grid size
 nl = model.model[-1].nl  # detect中有多少个layer
@@ -177,35 +198,41 @@ if cfg.sync_bn and cfg.use_gpu and RANK != -1:
     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(cfg.device)
 
 # 读取数据
-dataloader, dataset = create_dataloader(train_path, cfg.img_size, cfg.batch_size // cfg.world_size, gs, cfg,
+dataloader, dataset = create_dataloader(train_path, imgsz, cfg.batch_size // cfg.world_size, gs, cfg,
                                         hyp=hyperparams, augment=True, cache=cfg.cache_images, rect=cfg.rect,
                                         world_size=cfg.world_size, workers=cfg.workers,
                                         image_weights=cfg.image_weights, quad=cfg.quad, prefix='train: ')
+# dataloader, dataset = create_dataloader(train_path, imgsz, cfg.batch_size // cfg.world_size, gs, cfg.single_cls,
+#                                         hyp=hyperparams, augment=True, cache=cfg.cache_images, rect=cfg.rect,
+#                                         rank=RANK, workers=cfg.workers, image_weights=cfg.image_weights, quad=cfg.quad, prefix='train: ')
 mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # 最大标签类别
 nb = len(dataloader)  # batch数量
-dataiter = iter(dataloader)
 
 if RANK in [-1, 0]:
-    val_loader = create_dataloader(test_path, cfg.img_size, cfg.batch_size // cfg.world_size * 2, gs, cfg,
+    val_loader = create_dataloader(test_path, imgsz, cfg.batch_size // cfg.world_size * 2, gs, cfg,
                                    hyp=hyperparams, cache=cfg.cache_images, rect=True,
                                    world_size=cfg.world_size, workers=cfg.workers, pad=.5, prefix='val: ')[0]
+    # val_loader = create_dataloader(test_path, imgsz, cfg.batch_size // cfg.world_size * 2, gs, cfg.single_cls,
+    #                                hyp=hyperparams, cache=cfg.cache_images, rect=True,
+    #                                rank=-1, workers=cfg.workers, pad=.5, prefix='val: ')[0]
 
     # 自动计算锚框功能 从而使对目标的区域识别更加准确
     if not cfg.resume:  # 如果不是resume name自动计算锚框
         labels = np.concatenate(dataset.labels, 0)
-        check_anchors(dataset, thr=hyperparams.get('anchor_t'), imgsz=imgsz, model=model)
+        if not cfg.noautoanchor:
+            check_anchors(dataset, thr=hyperparams.get('anchor_t'), imgsz=imgsz, model=model)
         model.half().float()
 
 hyperparams['box'] *= 3. / nl  # scale to layers
 hyperparams['cls'] *= dataparams.get('nc') / 80. * 3. / nl  # scale to classes and layers
-hyperparams['obj'] *= (cfg.img_size / 640) ** 2 * 3. / nl  # scale to image size and layers
+hyperparams['obj'] *= (imgsz / 640) ** 2 * 3. / nl  # scale to image size and layers
 hyperparams['label_smoothing'] = cfg.label_smoothing
 model.nc = dataparams.get('nc')  # 类别数
 model.hyp = hyperparams  # 超参数
 model.gr = 1.0  # iou损失ratio
 model.class_weights = labels_to_class_weights(dataset.labels, dataparams.get('nc')).to(cfg.device) * dataparams.get(
     'nc')  # 根据标签的数量获得权重， 从而减少因为标签数量的不平均导致训练失衡
-last_update = -10
+last_update = -1
 maps = np.zeros(dataparams.get('nc'))
 results = (0, 0, 0, 0, 0, 0, 0)  # results 中 记录了P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
 nw = max(round(hyperparams['warmup_epochs'] * nb), 1000)
@@ -216,9 +243,14 @@ scheduler.last_epoch = start_epoch - 1  # 不移动
 amp_scaler = amp.GradScaler(enabled=cfg.use_gpu)
 # 初始化 loss 计算函数
 compute_loss = ComputeLoss(model, hyperparams)
+optimizer.zero_grad()
 
 for e in range(start_epoch, cfg.epochs):
     model.train()
+
+    # 如果训练剩余小于15 epoch 那么关闭mosaic 数据增强
+    if e >= cfg.epochs-15:
+        hyperparams['mosaic'] = 0.0
 
     # 加入image weight
     if cfg.image_weights:
@@ -235,14 +267,14 @@ for e in range(start_epoch, cfg.epochs):
     pbar = enumerate(dataloader)
     pbar = tqdm(pbar, total=nb)
     pbar.desc = 'training ......'
-    optimizer.zero_grad()  # 部分 batch的 loss会被清除 可以考虑放在epoch之外
+    # optimizer.zero_grad()  # 部分 batch的 loss会被清除 可以考虑放在epoch之外
 
     for i, (imgs, targets, paths, _) in pbar:
         # img : torch.Size([4, 3, 640, 640]) , targets : torch.Size([58, 6])
         # print(imgs.shape, targets.shape, paths)
 
         ni = i + nb * e
-        imgs = imgs.cuda().float() / 255.0 if cfg.use_gpu else imgs.float() / 255.0
+        imgs = imgs.to(cfg.device, non_blocking=True).float() / 255.0
 
         # 加入了 warm up 策略
         # 有助于减缓模型在初始阶段对mini-batch的提前过拟合现象，保持分布的平稳
@@ -369,7 +401,9 @@ for e in range(start_epoch, cfg.epochs):
                             pr = torch.cat([torch.zeros(20, 1), cls.unsqueeze(1).float(), pos], 1)
 
                         #            print(image.shape)  # torch.Size([4, 3, 640, 640]) image就是0-255的，所以不用进行操作
-                        save_box_img(image, target, image.shape[2], image.shape[1], prefix=f + '_gt.jpg')
-                        save_box_img(image, pr, image.shape[2], image.shape[1], prefix=f + '_pred.jpg')
+                        save_box_img(image, target, image.shape[2], image.shape[1], prefix=f + '_gt.jpg',
+                                     names=dataparams.get('names'))
+                        save_box_img(image, pr, image.shape[2], image.shape[1], prefix=f + '_pred.jpg',
+                                     names=dataparams.get('names'))
 
 # end epoch

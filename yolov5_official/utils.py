@@ -1,6 +1,10 @@
+import glob
 import math
+import os
 import random
 import re
+import urllib
+from pathlib import Path
 
 import cv2
 import torch.nn as nn
@@ -580,6 +584,7 @@ class ComputeLoss:
     def __init__(self, model, hyp, autobalance=False):
         super(ComputeLoss, self).__init__()
         self.autobalance = autobalance
+        self.sort_obj_iou = False
         # 选择计算 loss 所用的函数 pos_weight指正样本的weight
         BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([hyp['cls_pw']]))
         BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([hyp['obj_pw']]))
@@ -635,8 +640,12 @@ class ComputeLoss:
                 iou = bbox_iou(pbox.t(), tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss  计算ious loss
 
-                # 目标 objectness
-                tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(tobj.dtype)  # iou ratio
+                # Objectness
+                score_iou = iou.detach().clamp(0).type(tobj.dtype)
+                if self.sort_obj_iou:
+                    sort_id = torch.argsort(score_iou)
+                    b, a, gj, gi, score_iou = b[sort_id], a[sort_id], gj[sort_id], gi[sort_id], score_iou[sort_id]
+                tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * score_iou  # iou ratio
 
                 # classification 分类
                 if self.nc > 1:  # cls loss (only if multiple classes)
@@ -647,11 +656,11 @@ class ComputeLoss:
             obji = self.BCEobj(p[..., 4], tobj)  # 是否包含目标
             lobj += obji * self.balance[i]  # obj loss
 
-        #            if self.autobalance:
-        #                self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
+            if self.autobalance:
+                self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
         #
         if self.autobalance:
-            self.balance = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
+            self.balance = [x / self.balance[self.ssi] for x in self.balance]
         # 将不同的loss来源乘上相应的权重， 比如box的权重就是0.05
         lbox *= self.hyp['box']
         lobj *= self.hyp['obj']
@@ -1427,7 +1436,7 @@ def save_box_img(image, targets, wid, hei, prefix='', names=''):
     img_ = cv2.imread(prefix + '_ori.jpg')
     for box in targets:
         x1, y1, w, h = box[2:]  # 这里的x y是中心坐标
-        label = int(box[0])
+        label = int(box[1])
         # print(xmin, ymin, xmax, ymax)
         x1 = x1 - w / 2
         y1 = y1 - h / 2
@@ -1437,8 +1446,8 @@ def save_box_img(image, targets, wid, hei, prefix='', names=''):
         x2 = x1 + w * wid
         y2 = y1 + h * hei
         cv2.rectangle(img_, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
-        cv2.putText(img_, names[label], (int(x1), int(y1)), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                    (255, 255, 255), 1)
+        if 13 >= label >= 0:
+            cv2.putText(img_, names[label], (int(x1), int(y1)), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1)
     try:
         cv2.imwrite(prefix, img_)
     except:
@@ -1450,3 +1459,103 @@ def mixup(im, labels, im2, labels2):
     im = (im * r + im2 * (1 - r)).astype(np.uint8)
     labels = np.concatenate((labels, labels2), 0)
     return im, labels
+
+
+def bbox_ioa(box1, box2, eps=1E-7):
+    """ Returns the intersection over box2 area given box1, box2. Boxes are x1y1x2y2
+    box1:       np.array of shape(4)
+    box2:       np.array of shape(nx4)
+    returns:    np.array of shape(n)
+    """
+
+    box2 = box2.transpose()
+
+    # Get the coordinates of bounding boxes
+    b1_x1, b1_y1, b1_x2, b1_y2 = box1[0], box1[1], box1[2], box1[3]
+    b2_x1, b2_y1, b2_x2, b2_y2 = box2[0], box2[1], box2[2], box2[3]
+
+    # Intersection area
+    inter_area = (np.minimum(b1_x2, b2_x2) - np.maximum(b1_x1, b2_x1)).clip(0) * \
+                 (np.minimum(b1_y2, b2_y2) - np.maximum(b1_y1, b2_y1)).clip(0)
+
+    # box2 area
+    box2_area = (b2_x2 - b2_x1) * (b2_y2 - b2_y1) + eps
+
+    # Intersection over box2 area
+    return inter_area / box2_area
+
+
+def copy_paste(im, labels, segments, p=0.5):
+    n = len(segments)
+    if p and n:
+        h, w, c = im.shape  # height, width, channels
+        im_new = np.zeros(im.shape, np.uint8)
+        for j in random.sample(range(n), k=round(p * n)):
+            l, s = labels[j], segments[j]
+            box = w - l[3], l[2], w - l[1], l[4]
+            ioa = bbox_ioa(box, labels[:, 1:5])  # intersection over area
+            if (ioa < 0.30).all():  # allow 30% obscuration of existing labels
+                labels = np.concatenate((labels, [[l[0], *box]]), 0)
+                segments.append(np.concatenate((w - s[:, 0:1], s[:, 1:2]), 1))
+                cv2.drawContours(im_new, [segments[j].astype(np.int32)], -1, (255, 255, 255), cv2.FILLED)
+
+        result = cv2.bitwise_and(src1=im, src2=im_new)
+        result = cv2.flip(result, 1)  # augment segments (flip left-right)
+        i = result > 0  # pixels to replace
+        # i[:, :] = result.max(2).reshape(h, w, 1)  # act over ch
+        im[i] = result[i]  # cv2.imwrite('debug.jpg', im)  # debug
+
+    return im, labels, segments
+
+
+def check_file(file):
+    # Search/download file (if necessary) and return path
+    file = str(file)  # convert to str()
+    if Path(file).is_file() or file == '':  # exists
+        return file
+    elif file.startswith(('http:/', 'https:/')):  # download
+        url = str(Path(file)).replace(':/', '://')  # Pathlib turns :// -> :/
+        file = Path(urllib.parse.unquote(file)).name.split('?')[0]  # '%2F' to '/', split https://url.com/file.txt?auth
+        print(f'Downloading {url} to {file}...')
+        torch.hub.download_url_to_file(url, file)
+        assert Path(file).exists() and Path(file).stat().st_size > 0, f'File download failed: {url}'  # check
+        return file
+    else:  # search
+        files = glob.glob('./**/' + file, recursive=True)  # find file
+        assert len(files), f'File not found: {file}'  # assert file was found
+        assert len(files) == 1, f"Multiple files match '{file}', specify exact path: {files}"  # assert unique
+        return files[0]  # return file
+
+
+def check_dataset(data, autodownload=True):
+    # Download dataset if not found locally
+    path = Path(data.get('path', ''))  # optional 'path' field
+    if path:
+        for k in 'train', 'val', 'test':
+            if data.get(k):  # prepend path
+                data[k] = str(path / data[k]) if isinstance(data[k], str) else [str(path / x) for x in data[k]]
+
+    assert 'nc' in data, "Dataset 'nc' key missing."
+    if 'names' not in data:
+        data['names'] = [str(i) for i in range(data['nc'])]  # assign class names if missing
+    train, val, test, s = [data.get(x) for x in ('train', 'val', 'test', 'download')]
+    if val:
+        val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
+        if not all(x.exists() for x in val):
+            print('\nWARNING: Dataset not found, nonexistent paths: %s' % [str(x) for x in val if not x.exists()])
+            if s and autodownload:  # download script
+                if s.startswith('http') and s.endswith('.zip'):  # URL
+                    f = Path(s).name  # filename
+                    print(f'Downloading {s} ...')
+                    torch.hub.download_url_to_file(s, f)
+                    root = path.parent if 'path' in data else '..'  # unzip directory i.e. '../'
+                    Path(root).mkdir(parents=True, exist_ok=True)  # create root
+                    r = os.system(f'unzip -q {f} -d {root} && rm {f}')  # unzip
+                elif s.startswith('bash '):  # bash script
+                    print(f'Running {s} ...')
+                    r = os.system(s)
+                else:  # python script
+                    r = exec(s, {'yaml': data})  # return None
+                print('Dataset autodownload %s\n' % ('success' if r in (0, None) else 'failure'))  # print result
+            else:
+                raise Exception('Dataset not found.')

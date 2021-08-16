@@ -16,7 +16,6 @@ from pycocotools.cocoeval import COCOeval
 
 from yolov5_official.utils import coco80_to_coco91_class, non_max_suppression, scale_coords, xywh2xyxy, process_batch, \
     save_one_txt, save_one_json, ap_per_class
-# from yolov5_official.utils import diou_non_max_suppression as non_max_suppression
 from yolov5_official.utils import diou_non_max_suppression
 
 FILE = Path(__file__).absolute()
@@ -43,9 +42,8 @@ def run(data,
         plots=True,
         compute_loss=None,
         ):
-    
     half = half and device != 'cpu'
-    
+
     # 开启半精度。直接可以加快运行速度、减少GPU占用，并且只有不明显的accuracy损失
     if half:
         model.half()
@@ -56,8 +54,7 @@ def run(data,
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()  # iouv中元素数量
-
-    seen = 0
+    seen = 0  # 看过了多少图片
     names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
     # 80 class标签转 91class
     class_map = coco80_to_coco91_class() if is_coco else list(range(1000))
@@ -89,7 +86,8 @@ def run(data,
         # 每幅图片中筛选出300个nms框 [300 6]
         # 返回格式 16长度list， 每个里面都是[300 6]   即对于每张图片，我们都通过nms筛选出300个框
         nms_out = non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls)
-        nms_out = diou_non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls)
+        # diou的计算效果不如nms iou
+        # nms_out = diou_non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls)
         # 每个图片的数据  看看输出的框  out中存储的是所有先验框的类别结果
         for si, pred in enumerate(nms_out):
             # 取出targets[:, 0] 也就是 target中每个图片(对应16个index)所对应的目标 可以是一个图片样本中包括多个target 形状是[72,6]
@@ -124,22 +122,24 @@ def run(data,
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))  # (correct, conf, pcls, tcls)
             # 记录结果
             if save_txt:
-                s = f"\n labels has saved to {save_dir + 'labels'}" if save_txt else ''
-                print(s)
                 # 问题在于 predn 中的位置信息始终为nan
                 save_one_txt(predn, save_conf, shape, file=save_dir + 'labels/' + (path.stem + '.txt'))
-                
+
             if save_json:
                 # 将实验结果全部保存在jdict中
                 save_one_json(predn, jdict, path, class_map)
-    
+
+        if save_txt:
+            s = f"\n labels has saved to {save_dir + 'labels'}" if save_txt else ''
+            print(s)
 
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # 将stats的结果 concat在一起
     if len(stats) and stats[0].any():
         p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
         ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
         mp, mr, map50, map95 = p.mean(), r.mean(), ap50.mean(), ap.mean()
-        nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # 每个class 有多少个 targets 显示方式是 [cls0 的数量， cls1 的数量， ... ，cls13 的数量]  这个nt向量最少也有nc的长度
+        nt = np.bincount(stats[3].astype(np.int64),
+                         minlength=nc)  # 每个class 有多少个 targets 显示方式是 [cls0 的数量， cls1 的数量， ... ，cls13 的数量]  这个nt向量最少也有nc的长度
     else:
         nt = torch.zeros(1)
 
@@ -161,23 +161,24 @@ def run(data,
         print(f'\nEvaluating pycocotools mAP... saving {pred_json}...')
         with open(pred_json, 'w') as f:
             json.dump(jdict, f)
-            try:
-                anno = COCO(anno_json)  # init annotations api
-                pred = anno.loadRes(pred_json)  # init predictions api
-                eval = COCOeval(anno, pred, 'bbox')
-                if is_coco:
-                    eval.params.imgIds = [int(Path(x).stem) for x in
-                                          dataloader.dataset.img_files]  # image IDs to evaluate
-                eval.evaluate()
-                eval.accumulate()
-                eval.summarize()
-                map95, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
-            except Exception as e:
-                print(f'pycocotools unable to run: {e}')
 
+        try:
+            anno = COCO(anno_json)  # init annotations api
+            pred = anno.loadRes(pred_json)  # init predictions api
+            eval = COCOeval(anno, pred, 'bbox')
+            if is_coco:
+                eval.params.imgIds = [int(Path(x).stem) for x in
+                                      dataloader.dataset.img_files]  # image IDs to evaluate
+            eval.evaluate()
+            eval.accumulate()
+            eval.summarize()
+            map95, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+        except Exception as e:
+            print(f'pycocotools unable to run: {e}')
 
     # 返回结果
-    model.float()
+    if half:
+        model.float()
     maps = np.zeros(nc) + map95
 
     for i, c in enumerate(ap_class):
