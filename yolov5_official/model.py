@@ -2,6 +2,8 @@
 from copy import deepcopy
 from pathlib import Path
 import torch
+
+from yolov5_official.EMAModel import copy_attr
 from yolov5_official.modules import *
 import yaml
 import torch.nn.functional as F
@@ -10,6 +12,7 @@ import torch.nn as nn
 
 
 # 可以完全读取 v5s pt 的数据 效果很好
+from yolov5_official.utils import fuse_conv_and_bn, AutoShape
 
 
 class Detect(nn.Module):
@@ -68,7 +71,7 @@ class Detect(nn.Module):
                 if self.inplace:
                     y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]
                     y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
-                else:  # for YOLOv5 on AWS Inferentia https://github.com/ultralytics/yolov5/pull/2953
+                else:
                     xy = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                     wh = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i].view(1, self.na, 1, 1, 2)  # wh
                     y = torch.cat((xy, wh, y[..., 4:]), -1)
@@ -150,8 +153,8 @@ class Model(nn.Module):
         else:
             self.yaml_file = Path(cfg).name
             # 从yaml中读取 model 结构
-            with open(cfg) as f:
-                self.yaml = yaml.safe_load(f)
+            with open(cfg) as file:
+                self.yaml = yaml.safe_load(file)
 
         # 定义 model
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)
@@ -205,9 +208,9 @@ class Model(nn.Module):
     def forward_augment(self, x):
         img_size = x.shape[-2:]
         s = [1, 0.83, 0.67]
-        f = [None, 3, None]
+        fi = [None, 3, None]
         y = []
-        for si, fi in zip(s, f):
+        for si, fi in zip(s, fi):
             xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
             yi = self.forward_once(xi)[0]  # 调用forward once
             yi = self._descale_pred(yi, fi, si, img_size)
@@ -247,102 +250,142 @@ class Model(nn.Module):
             p = torch.cat((x, y, wh, p[..., 4:]), -1)
         return p
 
+    def autoshape(self):  # add AutoShape module
+        m = AutoShape(self)  # wrap model
+        copy_attr(m, self, include=('yaml', 'nc', 'hyp', 'names', 'stride'), exclude=())  # copy attributes
+        return m
 
-class ModelWithAtten(nn.Module):
-    def __init__(self, cfg='yolov5_official/yamls/yolov5s.yaml', ch=3, nc=None, anchors=None):
-        super(ModelWithAtten, self).__init__()
-        self.yaml_file = Path(cfg).name
-        # 从yaml中读取 model 结构
-        with open(cfg) as f:
-            self.yaml = yaml.safe_load(f)
+    def fuse(self):  # fuse model Conv2d() + BatchNorm2d() layers
+        for m in self.model.modules():
+            if type(m) is Conv and hasattr(m, 'bn'):
+                m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
+                delattr(m, 'bn')  # remove batchnorm
+                m.forward = m.fuseforward  # update forward
+        self.info()
+        return self
 
-        # 定义 model
-        ch = self.yaml['ch'] = self.yaml.get('ch', ch)
-        if nc and nc != self.yaml['nc']:
-            # 表示用形参中的参数代替 原始的 nc
-            print(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
-            self.yaml['nc'] = nc
-        if anchors:
-            # 用形参中的anchor代替原始的 anchors
-            print("Overriding model.yaml anchors")
-            self.yaml['anchors'] = round(anchors)
-
-        self.model, self.save = parse_model(deepcopy(self.yaml), inch=[ch])  # 解析 model
-        self.names = [str(i) for i in range(self.yaml['nc'])]  # name， 根据 class 数量，每个class对应一个i
-        self.inplace = self.yaml.get('inplace', True)  # True - default -- 如果指定键的值不存在时，返回该默认值。
-
-        m = self.model[-1]  # 取出 model 的最后一层
-
-        # torch.Size([1, 128, 32, 32])
-        # torch.Size([1, 256, 16, 16])
-        # torch.Size([1, 512, 8, 8])
-        # 增加attention的方法之一， 其作用是在Basenet、PAN、FPN之后加入transformer block， 接在Detect之前，
-        self.transformBlock1 = TransformerBlock(128, 128, num_heads=16, num_layers=1)
-        self.transformBlock2 = TransformerBlock(256, 256, num_heads=16, num_layers=1)
-        self.transformBlock3 = TransformerBlock(512, 512, num_heads=16, num_layers=1)
-
-        if isinstance(m, Detect):  # 如果最后一层是detect的话
-            stride = 256  # 计算 stride
-            m.inplace = self.inplace
-            #  m.stride 的大小通过stride / x.shape[-2] 来进行确定
-            m.stride = torch.Tensor(
-                [stride / x.shape[-2] for x in self.forward(torch.zeros(1, ch, stride, stride))])  # 计算出m 对应的stride
-            m.anchors /= m.stride.view(-1, 1, 1)  # 计算anchors  需要用anchors除以stride
-            check_anchor_order(m)  # 检查anchor的顺序是否正确
-            self.stride = m.stride
-            self._initialize_biases()  # 初始化detect biases
-
-        initialize_weights(self)
-        self.trainable = True
-
-    def _initialize_biases(self, cf=None):
-        # 初始化detect中conv的bias
-        m = self.model[-1]
-        for mod, s in zip(m.m, m.stride):  # stride和moduleList中的conv数量相同
-            b = mod.bias.view(m.na, -1)  # 取出m.m中的bias，并且reshape
-
-            # 重新对b进行计算
-            b.data[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
-            b.data[:, 5:] += math.log(0.6 / (m.nc - 0.99)) if cf is None else torch.log(cf / cf.sum())  # cls
-            mod.bias = nn.Parameter(b.view(-1), requires_grad=True)  # 使用计算后的b作为m中conv的参数
-
-    def forward(self, x, augment=False):
-        # 不论是训练还是测试，这里一定会用到detect
-        if augment:
-            return self.forward_augment(x)
-        else:
-            return self.forward_once(x)
-
-    def forward_augment(self, x):
-        img_size = x.shape[-2:]  # height, width
-        s = [1, 0.83, 0.67]  # scales
-        f = [None, 3, None]  # flips (2-ud, 3-lr)
-        y = []  # outputs
-        for si, fi in zip(s, f):
-            xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
-            yi = self.forward_once(xi)[0]  # forward
-            # cv2.imwrite(f'img_{si}.jpg', 255 * xi[0].cpu().numpy().transpose((1, 2, 0))[:, :, ::-1])  # save
-            yi = self._descale_pred(yi, fi, si, img_size)
-            y.append(yi)
-        return torch.cat(y, 1), None  # augmented inference, train
-
-    def forward_once(self, x):
-        y = []  # outputs
-        # 这个for的作用是，首先我们在self.save中预留设定了我们需要预留的结果
-        # 当结果index满足save时，将中间结果x存在y中，当用到的时候m.f != -1，就把结果读取出来
-        for m in self.model:  # 遍历模型中的所有module
-            if m.f != -1:  # if not from previous layer 这就是说如果我们当前m的输入是从两个以上层的输出中得到的
-                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
-            if isinstance(m, Detect):
-                # torch.Size([16, 128, 80, 80]) torch.Size([16, 256, 40, 40]) torch.Size([16, 512, 20, 20])
-                x = [self.transformBlock1(x[0]), self.transformBlock2(x[1]), self.transformBlock3(x[2])]
-            x = m(x)  # run
-            y.append(x if m.i in self.save else None)  # 如果m的index是在save列表中的，此时我们就取出x放到y中
-        '''
-        torch.Size([1, 3, 32, 32, 85]) torch.Size([1, 3, 16, 16, 85]) torch.Size([1, 3, 8, 8, 85])
-        '''
-        # print('model 最终输出：',x[0].shape, x[1].shape, x[2].shape)
-        return x
+#
+# class ModelWithAtten(nn.Module):
+#     def __init__(self, cfg='yolov5_official/yamls/yolov5s.yaml', ch=3, nc=None, anchors=None):
+#         super(ModelWithAtten, self).__init__()
+#         self.yaml_file = Path(cfg).name
+#         # 从yaml中读取 model 结构
+#         with open(cfg) as f:
+#             self.yaml = yaml.safe_load(f)
+#
+#         # 定义 model
+#         ch = self.yaml['ch'] = self.yaml.get('ch', ch)
+#         if nc and nc != self.yaml['nc']:
+#             # 表示用形参中的参数代替 原始的 nc
+#             print(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
+#             self.yaml['nc'] = nc
+#         if anchors:
+#             # 用形参中的anchor代替原始的 anchors
+#             print("Overriding model.yaml anchors")
+#             self.yaml['anchors'] = round(anchors)
+#
+#         self.model, self.save = parse_model(deepcopy(self.yaml), inch=[ch])  # 解析 model
+#         self.names = [str(i) for i in range(self.yaml['nc'])]  # name， 根据 class 数量，每个class对应一个i
+#         self.inplace = self.yaml.get('inplace', True)  # True - default -- 如果指定键的值不存在时，返回该默认值。
+#
+#         m = self.model[-1]  # 取出 model 的最后一层
+#
+#         # torch.Size([1, 128, 32, 32])
+#         # torch.Size([1, 256, 16, 16])
+#         # torch.Size([1, 512, 8, 8])
+#         # 增加attention的方法之一， 其作用是在Basenet、PAN、FPN之后加入transformer block， 接在Detect之前，
+#         self.transformBlock1 = TransformerBlock(128, 128, num_heads=16, num_layers=1)
+#         self.transformBlock2 = TransformerBlock(256, 256, num_heads=16, num_layers=1)
+#         self.transformBlock3 = TransformerBlock(512, 512, num_heads=16, num_layers=1)
+#
+#         if isinstance(m, Detect):  # 如果最后一层是detect的话
+#             stride = 256  # 计算 stride
+#             m.inplace = self.inplace
+#             #  m.stride 的大小通过stride / x.shape[-2] 来进行确定
+#             m.stride = torch.Tensor(
+#                 [stride / x.shape[-2] for x in self.forward(torch.zeros(1, ch, stride, stride))])  # 计算出m 对应的stride
+#             m.anchors /= m.stride.view(-1, 1, 1)  # 计算anchors  需要用anchors除以stride
+#             check_anchor_order(m)  # 检查anchor的顺序是否正确
+#             self.stride = m.stride
+#             self._initialize_biases()  # 初始化detect biases
+#
+#         initialize_weights(self)
+#         self.trainable = True
+#
+#     def _initialize_biases(self, cf=None):
+#         # 初始化detect中conv的bias
+#         m = self.model[-1]
+#         for mod, s in zip(m.m, m.stride):  # stride和moduleList中的conv数量相同
+#             b = mod.bias.view(m.na, -1)  # 取出m.m中的bias，并且reshape
+#
+#             # 重新对b进行计算
+#             b.data[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
+#             b.data[:, 5:] += math.log(0.6 / (m.nc - 0.99)) if cf is None else torch.log(cf / cf.sum())  # cls
+#             mod.bias = nn.Parameter(b.view(-1), requires_grad=True)  # 使用计算后的b作为m中conv的参数
+#
+#     def forward(self, x, augment=False):
+#         # 不论是训练还是测试，这里一定会用到detect
+#         if augment:
+#             return self.forward_augment(x)
+#         else:
+#             return self.forward_once(x)
+#
+#     def forward_augment(self, x):
+#         img_size = x.shape[-2:]  # height, width
+#         s = [1, 0.83, 0.67]  # scales
+#         f = [None, 3, None]  # flips (2-ud, 3-lr)
+#         y = []  # outputs
+#         for si, fi in zip(s, f):
+#             xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
+#             yi = self.forward_once(xi)[0]  # forward
+#             # cv2.imwrite(f'img_{si}.jpg', 255 * xi[0].cpu().numpy().transpose((1, 2, 0))[:, :, ::-1])  # save
+#             yi = self._descale_pred(yi, fi, si, img_size)
+#             y.append(yi)
+#         return torch.cat(y, 1), None  # augmented inference, train
+#
+#     def forward_once(self, x):
+#         y = []  # outputs
+#         # 这个for的作用是，首先我们在self.save中预留设定了我们需要预留的结果
+#         # 当结果index满足save时，将中间结果x存在y中，当用到的时候m.f != -1，就把结果读取出来
+#         for m in self.model:  # 遍历模型中的所有module
+#             if m.f != -1:  # if not from previous layer 这就是说如果我们当前m的输入是从两个以上层的输出中得到的
+#                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
+#             if isinstance(m, Detect):
+#                 # torch.Size([16, 128, 80, 80]) torch.Size([16, 256, 40, 40]) torch.Size([16, 512, 20, 20])
+#                 x = [self.transformBlock1(x[0]), self.transformBlock2(x[1]), self.transformBlock3(x[2])]
+#             x = m(x)  # run
+#             y.append(x if m.i in self.save else None)  # 如果m的index是在save列表中的，此时我们就取出x放到y中
+#         '''
+#         torch.Size([1, 3, 32, 32, 85]) torch.Size([1, 3, 16, 16, 85]) torch.Size([1, 3, 8, 8, 85])
+#         '''
+#         # print('model 最终输出：',x[0].shape, x[1].shape, x[2].shape)
+#         return x
+#
+#     def _descale_pred(self, p, flips, scale, img_size):
+#         # de-scale predictions following augmented inference (inverse operation)
+#         if self.inplace:
+#             p[..., :4] /= scale  # de-scale
+#             if flips == 2:
+#                 p[..., 1] = img_size[0] - p[..., 1]  # de-flip ud
+#             elif flips == 3:
+#                 p[..., 0] = img_size[1] - p[..., 0]  # de-flip lr
+#         else:
+#             x, y, wh = p[..., 0:1] / scale, p[..., 1:2] / scale, p[..., 2:4] / scale  # de-scale
+#             if flips == 2:
+#                 y = img_size[0] - y  # de-flip ud
+#             elif flips == 3:
+#                 x = img_size[1] - x  # de-flip lr
+#             p = torch.cat((x, y, wh, p[..., 4:]), -1)
+#         return p
+#
+#     def fuse(self):  # fuse model Conv2d() + BatchNorm2d() layers
+#         for m in self.model.modules():
+#             if type(m) is Conv and hasattr(m, 'bn'):
+#                 m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
+#                 delattr(m, 'bn')  # remove batchnorm
+#                 m.forward = m.fuseforward  # update forward
+#         self.info()
+#         return self
 
 
 # class ModelA(nn.Module):
@@ -487,7 +530,9 @@ def parse_model(par, inch):
 
         # print(m, args)  #<class 'yolov5_official.modules.Conv'> [256, 256, 3, 2]
         m_ = nn.Sequential(*[m(*args) for _ in range(n)]) if n > 1 else m(*args)  # 是否要重复多次
-        m_.f, m_.i, m_.np = f, i, sum([x.numel() for x in m_.parameters()])
+        t = str(m)[8:-2].replace('__main__.', '')
+        npp = sum([x.numel() for x in m_.parameters()])
+        m_.i, m_.f, m_.type, m_.np = i, f, t, npp
         # f可以是-1这种int 也可能是一个list  选择适当x，在之后进行保存
         save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # 当x不为-1， f不为-1的int或者list中不为-1的项
         # print('save: ', save)  # save:  [6, 4, 14, 10]
@@ -495,7 +540,6 @@ def parse_model(par, inch):
         if i == 0:  # 如果是网络的第一层，我们重置inch为空list
             inch = []  # 用于存储每个layer的输出
         inch.append(c2)
-        # print('mf: ', m.f)  # mf:  [-1, 10] or mf:  -1
 
     return nn.Sequential(*layers), sorted(save)
 

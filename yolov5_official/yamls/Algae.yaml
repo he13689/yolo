@@ -8,8 +8,8 @@
 # 数据拷贝到别的项目需要清理cache，不然可能会报错
 
 
-train: E:/models/yolo23/data/Algae/images/train
-val: E:/models/yolo23/data/Algae/images/val
+train: E:/models/yolo version 0.1.1/data/Algae/images/train
+val: E:/models/yolo version 0.1.1/data/Algae/images/val
 
 # Classes
 nc: 14  # number of classes

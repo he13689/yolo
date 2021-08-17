@@ -4,14 +4,18 @@ import os
 import random
 import re
 import urllib
-from pathlib import Path
+from copy import copy
+from pathlib import Path, PosixPath
 
 import cv2
+import pandas as pd
 import torch.nn as nn
 import numpy as np
 import torch
 import torchvision
 import yaml
+from PIL import Image
+from torch.cuda import amp
 from tqdm import tqdm
 
 
@@ -31,37 +35,78 @@ from tqdm import tqdm
 
 
 # lr梯度更新策略
+
+# c
+def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
+    '''
+    第一步：计算缩放比例
+    第二步：计算缩放后的尺寸
+    第三步：计算黑边填充数值
+    填充颜色是（114,114,114）
+
+    '''
+    shape = img.shape[:2]  # current shape [height, width]
+    if isinstance(new_shape, int):
+        new_shape = (new_shape, new_shape)
+
+    r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+    if not scaleup:  # only scale down, do not scale up (for better test mAP)
+        r = min(r, 1.0)
+
+    # Compute padding
+    ratio = r, r  # width, height ratios
+    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+    if auto:  # minimum rectangle
+        dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
+    elif scaleFill:  # stretch
+        dw, dh = 0.0, 0.0
+        new_unpad = (new_shape[1], new_shape[0])
+        ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]  # width, height ratios
+
+    dw /= 2  # divide padding into 2 sides
+    dh /= 2
+
+    if shape[::-1] != new_unpad:  # resize
+        img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
+    return img, ratio, (dw, dh)
+
+
+# c
 def one_cycle(y1=0.0, y2=1.0, steps=100):
     # lambda function for sinusoidal ramp from y1 to y2
     return lambda x: ((1 - math.cos(x * math.pi / steps)) / 2) * (y2 - y1) + y1
 
 
-def detection_collate(batch):
-    """
-    自定义的collate fn， 用于处理批图像中不同数量的关联物体标注
+# def detection_collate(batch):
+#     """
+#     自定义的collate fn， 用于处理批图像中不同数量的关联物体标注
+#
+#     输入是一个元组，里面包括image tensor以及标注的列表
+#
+#     Return:
+#         A tuple containing:
+#             1) (tensor) batch of images stacked on their 0 dim
+#             2) (list of tensors) annotations for a given image are stacked on
+#                                  0 dim
+#     """
+#     targets = []
+#     imgs = []
+#     for sample in batch:
+#         imgs.append(sample[0])
+#         targets.append(torch.FloatTensor(sample[1]))
+#     return torch.stack(imgs, 0), targets
 
-    输入是一个元组，里面包括image tensor以及标注的列表
 
-    Return:
-        A tuple containing:
-            1) (tensor) batch of images stacked on their 0 dim
-            2) (list of tensors) annotations for a given image are stacked on
-                                 0 dim
-    """
-    targets = []
-    imgs = []
-    for sample in batch:
-        imgs.append(sample[0])
-        targets.append(torch.FloatTensor(sample[1]))
-    return torch.stack(imgs, 0), targets
-
-
-# 这是一个数据采集function
-def v5_collate_fn(batch):
-    img, label, path, shapes = zip(*batch)  # transposed
-    for i, l in enumerate(label):
-        l[:, 0] = i  # add target image index for build_targets()
-    return torch.stack(img, 0), torch.cat(label, 0), path, shapes
+# # 这是一个数据采集function
+# def v5_collate_fn(batch):
+#     img, label, path, shapes = zip(*batch)  # transposed
+#     for i, l in enumerate(label):
+#         l[:, 0] = i  # add target image index for build_targets()
+#     return torch.stack(img, 0), torch.cat(label, 0), path, shapes
 
 
 # 非极大值抑制
@@ -72,8 +117,6 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
     Returns:
          list of detections, on (n,6) tensor per image [xyxy, conf, cls]
     """
-
-    print('nms is departed, please use diou nms! ')
 
     nc = prediction.shape[2] - 5  # 类别数量
     xc = prediction[..., 4] > conf_thres  # 候选框
@@ -556,18 +599,6 @@ def xywh2xyxy(x):
 
 
 def box_iou(box1, box2):
-    # https://github.com/pytorch/vision/blob/master/torchvision/ops/boxes.py
-    """
-    Return intersection-over-union (Jaccard index) of boxes.
-    Both sets of boxes are expected to be in (x1, y1, x2, y2) format.
-    Arguments:
-        box1 (Tensor[N, 4])
-        box2 (Tensor[M, 4])
-    Returns:
-        iou (Tensor[N, M]): the NxM matrix containing the pairwise
-            IoU values for every element in boxes1 and boxes2
-    """
-
     def box_area(box):
         # box = 4xn
         return (box[2] - box[0]) * (box[3] - box[1])
@@ -581,10 +612,10 @@ def box_iou(box1, box2):
 
 
 class ComputeLoss:
-    def __init__(self, model, hyp, autobalance=False):
+    def __init__(self, model, autobalance=False):
         super(ComputeLoss, self).__init__()
-        self.autobalance = autobalance
         self.sort_obj_iou = False
+        hyp = model.hyp
         # 选择计算 loss 所用的函数 pos_weight指正样本的weight
         BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([hyp['cls_pw']]))
         BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([hyp['obj_pw']]))
@@ -599,7 +630,7 @@ class ComputeLoss:
         self.balance = {3: [4.0, 1.0, 0.4]}.get(detect.nl, [4.0, 1.0, 0.25, 0.06,
                                                             .02])  # 如果detect.nl=3， 那么[4.0, 1.0, 0.4]，也就是说有多少组anchor
         self.ssi = list(detect.stride).index(16) if autobalance else 0
-        self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, model.gr, hyp, autobalance
+        self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, 1.0, hyp, autobalance
         for k in 'na', 'nc', 'nl', 'anchors':  # 设置了'na', 'nc', 'nl', 'anchors' 从detect中
             setattr(self, k, getattr(detect, k))
 
@@ -607,7 +638,7 @@ class ComputeLoss:
         '''
         输入为
         targets : torch.Size([58, 6])
-        
+
         pred : List 3(代表不同大小anchor set和特征图输出的结果), torch.Size([4（图片4张，bs=4）, 3（每个set的三个不同形状anchor）, 80（x有80个坐标）, 80（y有80个坐标）, 85（分类、pos、conf）]) torch.Size([4, 3, 40, 40, 85]) torch.Size([4, 3, 20, 20, 85])
         其中bs=4， 80是特征图size， anchor num是3， 85中由80个分类，1个conf以及4个大小坐标组成
         '''
@@ -623,8 +654,8 @@ class ComputeLoss:
         #        print(targets.shape, tcls[0].shape, tbox[0].shape, indices[0][0].shape, anchors[0].shape)
         #        print(tcls[0][0], tbox[0][0], indices[0][0][0], anchors[0][0])  tensor(22, device='cuda:0') tensor([ 0.0000,  0.0000,  3.9208,  4.7879], device='cuda:0') tensor(1, device='cuda:0') tensor([ 1.2500,  1.6250], device='cuda:0')
         for i, p in enumerate(pred):
-            b, a, gj, gi = indices[
-                i]  # 每个indices 里面有四个tensor，分别是 iamge, anchor, 以及 grid 上的 xy 代表第b张image的第a个anchor，它的坐标是gj和gi
+            b, a, gj, gi = indices[i]
+            # 每个indices 里面有四个tensor，分别是 iamge, anchor, 以及 grid 上的 xy 代表第b张image的第a个anchor，它的坐标是gj和gi
             #            print(p.shape, b.shape, a.shape, gj.shape, gi.shape)  # torch.Size([4, 3, 80, 80, 85]) torch.Size([447]) torch.Size([447]) torch.Size([447]) torch.Size([447])
             #            print(b[0], a[0], gj[0], gi[0]) # tensor(1, device='cuda:0') tensor(0, device='cuda:0') tensor(11.1508, device='cuda:0') tensor(72.8764, device='cuda:0')
             tobj = torch.zeros_like(p[..., 0])  # torch.Size([4, 3, 80, 80])
@@ -637,7 +668,7 @@ class ComputeLoss:
                 pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
                 pbox = torch.cat((pxy, pwh), 1)  # predicted box
                 # 对比pred出的box和tbox，看看它们两个之间的差异  使用CIOU进行改进
-                iou = bbox_iou(pbox.t(), tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
+                iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss  计算ious loss
 
                 # Objectness
@@ -670,7 +701,105 @@ class ComputeLoss:
         # 将所有的loss 加在一起看
         loss = lbox + lobj + lcls
         # 多加入了一个 总loss
-        return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
+        return loss * bs, torch.cat((lbox, lobj, lcls)).detach()
+
+    def build_targets(self, pred, targets, use_gpu=False):
+        # 下面参数假设targets有39个
+        na, nt = self.na, targets.shape[0]  # number of anchors, targets
+        tcls, tbox, indices, anch = [], [], [], []  # 返回的list
+        gain = torch.ones(7).cuda() if use_gpu else torch.ones(7)  # normalized to gridspace gain 是[0,0,.....0] 增益值
+        if use_gpu:
+            ai = torch.arange(na).cuda().float().view(na, 1).repeat(1, nt)
+        else:
+            ai = torch.arange(na).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
+        #        print(ai.shape, targets.shape)  # torch.Size([3, 39]) torch.Size([39, 6])
+        '''
+        ai: when na = 3
+        tensor([[ 0.,  0.,  0.,  0.,  0. nt个0.],
+        [ 1.,  1.,  1.,  1.,  1.],
+        [ 2.,  2.,  2.,  2.,  2.]])
+        '''
+
+        targets = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)
+        g = 0.5
+        if use_gpu:
+            off = torch.Tensor([[0, 0],
+                                [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
+                                ]).cuda().float() * g
+        else:
+            off = torch.Tensor([[0, 0],
+                                [1, 0], [0, 1], [-1, 0], [0, -1],
+                                ]).float() * g
+
+        for i in range(self.nl):  # 根据layer数量 3
+            anchors = self.anchors[i]
+            gain[2:6] = torch.tensor(pred[i].shape)[[3, 2, 3, 2]]  # xyxy gain
+            # ori target shape:torch.Size([39, 6])
+            # tensor([  1.,   1.,  80.,  80.,  80.,  80.,   1.], device='cuda:0') torch.Size([7]) torch.Size([3, 39, 7])
+            #            print(gain, gain.shape,targets.shape)
+            # Match targets to anchors
+            t = targets * gain  # 目标乘上增益
+            if nt:
+                '''
+                分析可知， targets是 image, class,  x y , w h 一共6维
+                其中 
+                image是index
+                tensor([ 0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  1.,  1.,  1.,  1.,
+                 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  2.,  2.,  2.,
+                 2.,  2.,  2.,  2.,  2.,  2.,  2.,  2.,  2.,  2.,  2.,  2.,
+                 2.,  2.,  2.,  2.,  2.,  2.,  2.,  2.,  3.,  3.,  3.,  3.,
+                 3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,
+                 3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,
+                 3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,
+                 3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,  3.,
+                 3.])
+
+                class 是 80类中 分类结果
+                tensor([ 45.,  45.,  50.,  45.,  79.,  79.,  79.,  41.,  23.,  23.,
+                 22.,  22.,  22.,   0.,  50.,  35.,  35.,   0.,   0.,   0.,
+                  0.,  58.,  75.,   0.,  56.,  56.,  60.,   0.,   0.,   0.,
+                  0.,   0.,   0.,   0.,   0.,  41.,  56.,  56.,  60.,   0.,
+                  0.,  41.,  41.,  41.,  22.,  13.,  77.,  56.,   0.,   9.,
+                  9.,  24.,   7.,   7.,   0.,   0.,   0.,   0.,   0.,   0.,
+                  0.,   0.,   0.,   0.,   0.,   9.,   9.,   9.,  24.,  26.,
+                  0.,   7.,   7.,   7.,   9.,  26.,   0.,   9.,   9.,   9.,
+                 26.,  26.,  58.,  60.,  43.,  44.,  55.,  73.,  13.,  13.,
+                 25.,  25.,  26.,  13.,  13.,  60.,  25.])
+
+                '''
+                # 匹配
+                r = t[:, :, 4:6] / anchors[:, None]  # 宽高比
+                j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare
+                t = t[j]  # filter
+
+                # Offsets
+                gxy = t[:, 2:4]  # grid xy
+                gxi = gain[[2, 3]] - gxy  # inverse
+                j, k = ((gxy % 1. < g) & (gxy > 1.)).T
+                l, m = ((gxi % 1. < g) & (gxi > 1.)).T
+                j = torch.stack((torch.ones_like(j), j, k, l, m))
+                t = t.repeat((5, 1, 1))[j]
+                offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
+            else:
+                t = targets[0]
+                offsets = 0
+
+            # Define
+            b, c = t[:, :2].long().T  # image, class
+            gxy = t[:, 2:4]  # grid xy
+            gwh = t[:, 4:6]  # grid wh
+            gij = (gxy - offsets).long()
+            gi, gj = gij.T  # grid xy indices
+
+            # Append
+            a = t[:, 6].long()  # anchor indices
+            indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
+            anch.append(anchors[a])  # anchors
+            tcls.append(c)  # class
+
+        # 返回的indices是 image, class，
+        return tcls, tbox, indices, anch
 
     def build_targets(self, pred, targets, use_gpu=False):
         # 下面参数假设targets有39个
@@ -755,10 +884,10 @@ class ComputeLoss:
 
             # Define
             b, c = t[:, :2].long().T  # image, class
-            gxy = t[:, 2:4].long()  # grid xy
-            gwh = t[:, 4:6].long()  # grid wh
-            gij = (gxy - offsets.long())
-            gi, gj = gij.t()  # grid xy indices
+            gxy = t[:, 2:4]  # grid xy
+            gwh = t[:, 4:6]  # grid wh
+            gij = (gxy - offsets).long()
+            gi, gj = gij.T  # grid xy indices
 
             # Append
             a = t[:, 6].long()  # anchor indices
@@ -771,7 +900,7 @@ class ComputeLoss:
         return tcls, tbox, indices, anch
 
 
-def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
+def smooth_BCE(eps=0.1):
     # 返回正负标签经过smooth后的target  正标签1.0 - 0.5 * eps  在一定程度上可以减少过拟合
     return 1.0 - 0.5 * eps, 0.5 * eps
 
@@ -885,12 +1014,7 @@ def labels_to_class_weights(labels, nc=80):
 
 
 def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7):
-    # Returns the IoU of box1 to box2. box1 is 4, box2 is nx4
-    box2 = box2.t()
-
-    box1 = box1.float()
-    box2 = box2.float()
-    # Get the coordinates of bounding boxes
+    box2 = box2.T
     if x1y1x2y2:  # x1, y1, x2, y2 = box1
         b1_x1, b1_y1, b1_x2, b1_y2 = box1[0], box1[1], box1[2], box1[3]
         b2_x1, b2_y1, b2_x2, b2_y2 = box2[0], box2[1], box2[2], box2[3]
@@ -911,8 +1035,8 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=
 
     iou = inter / union
     if GIoU or DIoU or CIoU:
-        cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)  # convex (smallest enclosing box) width
-        ch = torch.max(b1_y2, b2_y2) - torch.min(b1_y1, b2_y1)  # convex height
+        cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)
+        ch = torch.max(b1_y2, b2_y2) - torch.min(b1_y1, b2_y1)
         if CIoU or DIoU:  # Distance or Complete IoU https://arxiv.org/abs/1911.08287v1
             c2 = cw ** 2 + ch ** 2 + eps  # convex diagonal squared
             rho2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2) ** 2 +
@@ -928,7 +1052,7 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=
             c_area = cw * ch + eps  # convex area
             return iou - (c_area - union) / c_area  # GIoU
     else:
-        return iou  # IoU
+        return iou
 
 
 # 评估最好的模型 给map不同的权重值，表示它们在评选最好模型时的比重
@@ -1123,19 +1247,6 @@ def compute_ap(recall, precision):
 
 
 def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=()):
-    """ Compute the average precision, given the recall and precision curves.
-    Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
-    # Arguments
-        tp:  True positives (nparray, nx1 or nx10).
-        conf:  Objectness value from 0-1 (nparray).
-        pred_cls:  Predicted object classes (nparray).
-        target_cls:  True object classes (nparray).
-        plot:  Plot precision-recall curve at mAP@0.5
-        save_dir:  Plot save directory
-    # Returns
-        The average precision as computed in py-faster-rcnn.
-    """
-
     # Sort by objectness
     i = np.argsort(-conf)
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
@@ -1558,3 +1669,265 @@ def check_dataset(data, autodownload=True):
                 print('Dataset autodownload %s\n' % ('success' if r in (0, None) else 'failure'))  # print result
             else:
                 raise Exception('Dataset not found.')
+
+
+def fuse_conv_and_bn(conv, bn):
+    # Fuse convolution and batchnorm layers https://tehnokv.com/posts/fusing-batchnorm-and-conv/
+    fusedconv = nn.Conv2d(conv.in_channels,
+                          conv.out_channels,
+                          kernel_size=conv.kernel_size,
+                          stride=conv.stride,
+                          padding=conv.padding,
+                          groups=conv.groups,
+                          bias=True).requires_grad_(False).to(conv.weight.device)
+
+    # prepare filters
+    w_conv = conv.weight.clone().view(conv.out_channels, -1)
+    w_bn = torch.diag(bn.weight.div(torch.sqrt(bn.eps + bn.running_var)))
+    fusedconv.weight.copy_(torch.mm(w_bn, w_conv).view(fusedconv.weight.shape))
+
+    # prepare spatial bias
+    b_conv = torch.zeros(conv.weight.size(0), device=conv.weight.device) if conv.bias is None else conv.bias
+    b_bn = bn.bias - bn.weight.mul(bn.running_mean).div(torch.sqrt(bn.running_var + bn.eps))
+    fusedconv.bias.copy_(torch.mm(w_bn, b_conv.reshape(-1, 1)).reshape(-1) + b_bn)
+
+    return fusedconv
+
+
+class AutoShape(nn.Module):
+    # YOLOv5 input-robust model wrapper for passing cv2/np/PIL/torch inputs. Includes preprocessing, inference and NMS
+    conf = 0.25  # NMS confidence threshold
+    iou = 0.45  # NMS IoU threshold
+    classes = None  # (optional list) filter by class
+    max_det = 1000  # maximum number of detections per image
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model.eval()
+
+    def autoshape(self):
+        return self
+
+    @torch.no_grad()
+    def forward(self, imgs, size=640, augment=False, profile=False):
+        # Inference from various sources. For height=640, width=1280, RGB images example inputs are:
+        #   filename:   imgs = 'data/images/zidane.jpg'  # str or PosixPath
+        #   URI:             = 'https://ultralytics.com/images/zidane.jpg'
+        #   OpenCV:          = cv2.imread('image.jpg')[:,:,::-1]  # HWC BGR to RGB x(640,1280,3)
+        #   PIL:             = Image.open('image.jpg')  # HWC x(640,1280,3)
+        #   numpy:           = np.zeros((640,1280,3))  # HWC
+        #   torch:           = torch.zeros(16,3,320,640)  # BCHW (scaled to size=640, 0-1 values)
+        #   multiple:        = [Image.open('image1.jpg'), Image.open('image2.jpg'), ...]  # list of images
+
+        p = next(self.model.parameters())  # for device and type
+        if isinstance(imgs, torch.Tensor):  # torch
+            with amp.autocast(enabled=p.device.type != 'cpu'):
+                return self.model(imgs.to(p.device).type_as(p), augment, profile)  # inference
+
+        # Pre-process
+        n, imgs = (len(imgs), imgs) if isinstance(imgs, list) else (1, [imgs])  # number of images, list of images
+        shape0, shape1, files = [], [], []  # image and inference shapes, filenames
+        for i, im in enumerate(imgs):
+            f = f'image{i}'  # filename
+            if isinstance(im, (str, PosixPath)):  # filename or uri
+                import requests
+                im, f = Image.open(requests.get(im, stream=True).raw if str(im).startswith('http') else im), im
+                im = np.asarray(exif_transpose(im))
+            elif isinstance(im, Image.Image):  # PIL Image
+                im, f = np.asarray(exif_transpose(im)), getattr(im, 'filename', f) or f
+            files.append(Path(f).with_suffix('.jpg').name)
+            if im.shape[0] < 5:  # image in CHW
+                im = im.transpose((1, 2, 0))  # reverse dataloader .transpose(2, 0, 1)
+            im = im[..., :3] if im.ndim == 3 else np.tile(im[..., None], 3)  # enforce 3ch input
+            s = im.shape[:2]  # HWC
+            shape0.append(s)  # image shape
+            g = (size / max(s))  # gain
+            shape1.append([y * g for y in s])
+            imgs[i] = im if im.data.contiguous else np.ascontiguousarray(im)  # update
+        shape1 = [make_divisible(x, int(self.stride.max())) for x in np.stack(shape1, 0).max(0)]  # inference shape
+        x = [letterbox(im, new_shape=shape1, auto=False)[0] for im in imgs]  # pad
+        x = np.stack(x, 0) if n > 1 else x[0][None]  # stack
+        x = np.ascontiguousarray(x.transpose((0, 3, 1, 2)))  # BHWC to BCHW
+        x = torch.from_numpy(x).to(p.device).type_as(p) / 255.  # uint8 to fp16/32
+
+        with amp.autocast(enabled=p.device.type != 'cpu'):
+            # Inference
+            y = self.model(x, augment, profile)[0]  # forward
+
+            # Post-process
+            y = non_max_suppression(y, self.conf, iou_thres=self.iou, classes=self.classes, max_det=self.max_det)  # NMS
+            for i in range(n):
+                scale_coords(shape1, y[i][:, :4], shape0[i])
+
+            return Detections(imgs, y, files, self.names, x.shape)
+
+
+class Detections:
+    # YOLOv5 detections class for inference results
+    def __init__(self, imgs, pred, files, names=None, shape=None):
+        super().__init__()
+        d = pred[0].device  # device
+        gn = [torch.tensor([*[im.shape[i] for i in [1, 0, 1, 0]], 1., 1.], device=d) for im in imgs]  # normalizations
+        self.imgs = imgs  # list of images as numpy arrays
+        self.pred = pred  # list of tensors pred[0] = (xyxy, conf, cls)
+        self.names = names  # class names
+        self.files = files  # image filenames
+        self.xyxy = pred  # xyxy pixels
+        self.xywh = [xyxy2xywh(x) for x in pred]  # xywh pixels
+        self.xyxyn = [x / g for x, g in zip(self.xyxy, gn)]  # xyxy normalized
+        self.xywhn = [x / g for x, g in zip(self.xywh, gn)]  # xywh normalized
+        self.n = len(self.pred)  # number of images (batch size)
+        self.s = shape  # inference BCHW shape
+
+    def display(self, pprint=False, show=False, save=False, crop=False, render=False, save_dir=Path('')):
+        for i, (im, pred) in enumerate(zip(self.imgs, self.pred)):
+            str = f'image {i + 1}/{len(self.pred)}: {im.shape[0]}x{im.shape[1]} '
+            if pred.shape[0]:
+                for c in pred[:, -1].unique():
+                    n = (pred[:, -1] == c).sum()  # detections per class
+                    str += f"{n} {self.names[int(c)]}{'s' * (n > 1)}, "  # add to string
+
+            else:
+                str += '(no detections)'
+
+            im = Image.fromarray(im.astype(np.uint8)) if isinstance(im, np.ndarray) else im  # from np
+            if render:
+                self.imgs[i] = np.asarray(im)
+
+    def print(self):
+        self.display(pprint=True)  # print results
+
+    def show(self):
+        self.display(show=True)  # show results
+
+    def save(self, save_dir='runs/detect/exp'):
+        save_dir = increment_path(save_dir, exist_ok=save_dir != 'runs/detect/exp', mkdir=True)  # increment save_dir
+        self.display(save=True, save_dir=save_dir)  # save results
+
+    def crop(self, save_dir='runs/detect/exp'):
+        save_dir = increment_path(save_dir, exist_ok=save_dir != 'runs/detect/exp', mkdir=True)  # increment save_dir
+        self.display(crop=True, save_dir=save_dir)  # crop results
+
+    def render(self):
+        self.display(render=True)  # render results
+        return self.imgs
+
+    def pandas(self):
+        # return detections as pandas DataFrames, i.e. print(results.pandas().xyxy[0])
+        new = copy(self)  # return copy
+        ca = 'xmin', 'ymin', 'xmax', 'ymax', 'confidence', 'class', 'name'  # xyxy columns
+        cb = 'xcenter', 'ycenter', 'width', 'height', 'confidence', 'class', 'name'  # xywh columns
+        for k, c in zip(['xyxy', 'xyxyn', 'xywh', 'xywhn'], [ca, ca, cb, cb]):
+            a = [[x[:5] + [int(x[5]), self.names[int(x[5])]] for x in x.tolist()] for x in getattr(self, k)]  # update
+            setattr(new, k, [pd.DataFrame(x, columns=c) for x in a])
+        return new
+
+    def tolist(self):
+        # return a list of Detections objects, i.e. 'for result in results.tolist():'
+        x = [Detections([self.imgs[i]], [self.pred[i]], self.names, self.s) for i in range(self.n)]
+        for d in x:
+            for k in ['imgs', 'pred', 'xyxy', 'xyxyn', 'xywh', 'xywhn']:
+                setattr(d, k, getattr(d, k)[0])  # pop out of list
+        return x
+
+    def __len__(self):
+        return self.n
+
+
+def exif_transpose(image):
+    """
+    Transpose a PIL image accordingly if it has an EXIF Orientation tag.
+    From https://github.com/python-pillow/Pillow/blob/master/src/PIL/ImageOps.py
+
+    :param image: The image to transpose.
+    :return: An image.
+    """
+    exif = image.getexif()
+    orientation = exif.get(0x0112, 1)  # default 1
+    if orientation > 1:
+        method = {2: Image.FLIP_LEFT_RIGHT,
+                  3: Image.ROTATE_180,
+                  4: Image.FLIP_TOP_BOTTOM,
+                  5: Image.TRANSPOSE,
+                  6: Image.ROTATE_270,
+                  7: Image.TRANSVERSE,
+                  8: Image.ROTATE_90,
+                  }.get(orientation)
+        if method is not None:
+            image = image.transpose(method)
+            del exif[0x0112]
+            image.info["exif"] = exif.tobytes()
+    return image
+
+
+class ConfusionMatrix:
+    # Updated version of https://github.com/kaanakan/object_detection_confusion_matrix
+    def __init__(self, nc, conf=0.25, iou_thres=0.45):
+        self.matrix = np.zeros((nc + 1, nc + 1))
+        self.nc = nc  # number of classes
+        self.conf = conf
+        self.iou_thres = iou_thres
+
+    def process_batch(self, detections, labels):
+        """
+        Return intersection-over-union (Jaccard index) of boxes.
+        Both sets of boxes are expected to be in (x1, y1, x2, y2) format.
+        Arguments:
+            detections (Array[N, 6]), x1, y1, x2, y2, conf, class
+            labels (Array[M, 5]), class, x1, y1, x2, y2
+        Returns:
+            None, updates confusion matrix accordingly
+        """
+        detections = detections[detections[:, 4] > self.conf]
+        gt_classes = labels[:, 0].int()
+        detection_classes = detections[:, 5].int()
+        iou = box_iou(labels[:, 1:], detections[:, :4])
+
+        x = torch.where(iou > self.iou_thres)
+        if x[0].shape[0]:
+            matches = torch.cat((torch.stack(x, 1), iou[x[0], x[1]][:, None]), 1).cpu().numpy()
+            if x[0].shape[0] > 1:
+                matches = matches[matches[:, 2].argsort()[::-1]]
+                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                matches = matches[matches[:, 2].argsort()[::-1]]
+                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+        else:
+            matches = np.zeros((0, 3))
+
+        n = matches.shape[0] > 0
+        m0, m1, _ = matches.transpose().astype(np.int16)
+        for i, gc in enumerate(gt_classes):
+            j = m0 == i
+            if n and sum(j) == 1:
+                self.matrix[detection_classes[m1[j]], gc] += 1  # correct
+            else:
+                self.matrix[self.nc, gc] += 1  # background FP
+
+        if n:
+            for i, dc in enumerate(detection_classes):
+                if not any(m1 == i):
+                    self.matrix[dc, self.nc] += 1  # background FN
+
+    def matrix(self):
+        return self.matrix
+
+    def print(self):
+        for i in range(self.nc + 1):
+            print(' '.join(map(str, self.matrix[i])))
+
+
+def increment_path(path, exist_ok=False, sep='', mkdir=False):
+    # Increment file or directory path, i.e. runs/exp --> runs/exp{sep}2, runs/exp{sep}3, ... etc.
+    path = Path(path)  # os-agnostic
+    if path.exists() and not exist_ok:
+        suffix = path.suffix
+        path = path.with_suffix('')
+        dirs = glob.glob(f"{path}{sep}*")  # similar paths
+        matches = [re.search(rf"%s{sep}(\d+)" % path.stem, d) for d in dirs]
+        i = [int(m.groups()[0]) for m in matches if m]  # indices
+        n = max(i) + 1 if i else 2  # increment number
+        path = Path(f"{path}{sep}{n}{suffix}")  # update path
+    dir = path if path.suffix == '' else path.parent  # directory
+    if not dir.exists() and mkdir:
+        dir.mkdir(parents=True, exist_ok=True)  # make directory
+    return path

@@ -208,9 +208,9 @@ for e in range(start_epoch, cfg.epochs):
                 dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)  #
     
     if cfg.use_gpu:
-        mloss = torch.zeros(4).cuda()  # 平均loss
+        mloss = torch.zeros(3).cuda()  # 平均loss
     else:
-        mloss = torch.zeros(4)
+        mloss = torch.zeros(3)
 
     pbar = enumerate(dataloader)
     pbar = tqdm(pbar, total=nb)

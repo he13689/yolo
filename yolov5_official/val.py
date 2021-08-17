@@ -15,7 +15,7 @@ from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
 from yolov5_official.utils import coco80_to_coco91_class, non_max_suppression, scale_coords, xywh2xyxy, process_batch, \
-    save_one_txt, save_one_json, ap_per_class
+    save_one_txt, save_one_json, ap_per_class, ConfusionMatrix
 from yolov5_official.utils import diou_non_max_suppression
 
 FILE = Path(__file__).absolute()
@@ -60,7 +60,7 @@ def run(data,
     class_map = coco80_to_coco91_class() if is_coco else list(range(1000))
     # 结果 数据
     p, r, f1, mp, mr, map50, map95, t0, t1, t2 = 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.
-    loss = torch.zeros(4, device=device)  # 损失的值
+    loss = torch.zeros(3, device=device)  # 损失的值
     jdict, stats, ap, ap_class = [], [], [], []  # 存储计算所需要的中间数据
     # 读取数据  从val loader中
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc='validating please wait')):

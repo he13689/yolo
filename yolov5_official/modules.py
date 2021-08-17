@@ -3,11 +3,10 @@
 import math
 from collections import OrderedDict
 from functools import partial
-
 import torch
 import torch.nn as nn
 
-from yolov5_official.utils import diou_non_max_suppression as non_max_suppression, truncated_normal_, _init_vit_weights
+from yolov5_official.utils import truncated_normal_, _init_vit_weights
 
 
 def autopad(k, p=None):  # kernel, padding
@@ -329,20 +328,6 @@ class Concat(nn.Module):  # 传入dim 进行cat
         return torch.cat(x, self.d)
 
 
-class NMS(nn.Module):
-    # Non-Maximum Suppression (NMS) module
-    conf = 0.25  # confidence threshold
-    iou = 0.45  # IoU threshold
-    classes = None  # (optional list) filter by class
-    max_det = 1000  # maximum number of detections per image
-
-    def __init__(self):
-        super(NMS, self).__init__()
-
-    def forward(self, x):
-        return non_max_suppression(x[0], self.conf, iou_thres=self.iou, classes=self.classes, max_det=self.max_det)
-
-
 class Classifier(nn.Module):
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1):
         '''
@@ -391,6 +376,7 @@ class PatchEmbeddingBlock(nn.Module):
         if self.norm:
             y = self.norm(y)
         return y
+
 
 class MHAttention(nn.Module):
     def __init__(self, dim,  # 输入token的dim
@@ -607,7 +593,5 @@ class ViT(nn.Module):
         x = self.blocks(x)  # 经过transformer encoder
         x = self.norm_layer(x)  # 经过norm
 
-        y = self.head(x[:,0])
+        y = self.head(x[:, 0])
         return y
-
-
