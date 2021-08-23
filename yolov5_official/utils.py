@@ -1410,7 +1410,7 @@ def check_anchor_order(m):
 
 
 def check_anchors(dataset, model, thr=4.0, imgsz=640):
-    print('caculate auto anchor size  自适应计算锚框大小')
+    print('自适应计算锚框大小')
     # Check anchor fit to data, recompute if necessary
     m = model.module.model[-1] if hasattr(model, 'module') else model.model[-1]  # Detect()
     shapes = imgsz * dataset.shapes / dataset.shapes.max(1, keepdims=True)

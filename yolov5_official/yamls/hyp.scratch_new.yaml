@@ -6,7 +6,7 @@
 lr0: 0.01  # initial learning rate (SGD=1E-2, Adam=1E-3)
 lrf: 0.2  # final OneCycleLR learning rate (lr0 * lrf)
 #momentum: 0.937  # SGD momentum/Adam beta1  这个937是专门为了优化coco的，所以我们将其泛化
-momentum: 0.937
+momentum: 0.9  # 更加通用化 而不是针对coco数据集
 weight_decay: 0.0005  # optimizer weight decay 5e-4
 warmup_epochs: 3.0  # warmup epochs (fractions ok)
 warmup_momentum: 0.8  # warmup initial momentum
@@ -19,7 +19,7 @@ obj_pw: 1.0  # obj BCELoss positive_weight
 iou_t: 0.20  # IoU training threshold
 anchor_t: 4.0  # anchor-multiple threshold
 #anchors: 3  # anchors per output layer (0 to ignore)
-fl_gamma: 0.0 # 可以改为1.5 试一下
+fl_gamma: 0.0 # 可以改为1.5 试一下 加入Focal loss
 hsv_h: 0.015  # image HSV-Hue augmentation (fraction)
 hsv_s: 0.7  # image HSV-Saturation augmentation (fraction)
 hsv_v: 0.4  # image HSV-Value augmentation (fraction)
@@ -31,5 +31,5 @@ perspective: 0.0  # image perspective (+/- fraction), range 0-0.001
 flipud: 0.0  # image flip up-down (probability)
 fliplr: 0.5  # image flip left-right (probability)
 mosaic: 1.0  # image mosaic (probability)
-mixup: 0.0  # image mixup (probability)
-copy_paste: 0.0  # 加入这个可以让mosaic更好
+mixup: 0.3  # image mixup (probability)
+copy_paste: 0.25  # 加入这个可以让mosaic更好  概率
